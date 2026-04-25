@@ -7,7 +7,7 @@ services:
     # This command starts the FastAPI server
     startCommand: uvicorn main:app --host 0.0.0.0 --port $PORT
     # Root directory for the backend service within the monorepo
-    rootContext: backend
+    rootDir: backend
     envVars:
       - key: PYTHON_VERSION
         value: 3.11.0

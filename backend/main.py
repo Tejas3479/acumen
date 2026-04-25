@@ -125,7 +125,7 @@ class ChatRequest(BaseModel):
 
 
 class ChatResponse(BaseModel):
-    response: Any
+    response: str
     tool_used: Optional[str] = None
     tool_output: Any = None
     is_web_augmented: bool = False
@@ -173,6 +173,7 @@ class NotebookSummary(BaseModel):
     title: str
     status: str
     created_at: str
+    source_type: str = "pdf"
 
 
 class NotebooksResponse(BaseModel):
@@ -234,7 +235,8 @@ class Database:
                     status        TEXT NOT NULL DEFAULT 'processing',
                     clusters_json TEXT,
                     clerk_id      TEXT NOT NULL DEFAULT '',
-                    created_at    TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+                    created_at    TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    source_type   TEXT NOT NULL DEFAULT 'pdf'
                 )
                 """
             )
@@ -253,6 +255,11 @@ class Database:
                     "ALTER TABLE notebooks ADD COLUMN created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP"
                 )
                 logger.info("Migration: added 'created_at' column to notebooks.")
+            if "source_type" not in existing_cols:
+                conn.execute(
+                    "ALTER TABLE notebooks ADD COLUMN source_type TEXT NOT NULL DEFAULT 'pdf'"
+                )
+                logger.info("Migration: added 'source_type' column to notebooks.")
             conn.commit()
         logger.info("SQLite database ready at '%s'.", self.path)
 
@@ -262,6 +269,7 @@ class Database:
         title: str,
         clusters: Dict[int, List[str]],
         clerk_id: str = "",
+        source_type: str = "pdf",
     ) -> None:
         """Insert a new notebook row with status='processing'."""
         # JSON keys must be strings; convert int cluster IDs
@@ -270,10 +278,10 @@ class Database:
             conn.execute(
                 """
                 INSERT OR REPLACE INTO notebooks
-                    (id, title, session_id, status, clusters_json, clerk_id)
-                VALUES (?, ?, ?, 'processing', ?, ?)
+                    (id, title, session_id, status, clusters_json, clerk_id, source_type)
+                VALUES (?, ?, ?, 'processing', ?, ?, ?)
                 """,
-                (session_id, title, session_id, clusters_json, clerk_id),
+                (session_id, title, session_id, clusters_json, clerk_id, source_type),
             )
             conn.commit()
         logger.info(
@@ -453,18 +461,21 @@ def _run_full_ingestion_background(session_id: str, title: str, pdf_bytes: bytes
         db.update_status(session_id, "ingesting")
         
         new_clusters = ingest_pdf(pdf_bytes)
+        # Convert new clusters keys to strings for consistency
+        new_clusters_str = {str(k): v for k, v in new_clusters.items()}
         
         # Merge clusters if appending
         if existing_clusters:
             existing_keys = [int(k) for k in existing_clusters.keys()]
             offset = max(existing_keys) + 1 if existing_keys else 0
-            offset_new = {k + offset: v for k, v in new_clusters.items()}
+            offset_new = {str(int(k) + offset): v for k, v in new_clusters_str.items()}
             combined = {**existing_clusters, **offset_new}
-            db.save_notebook(session_id, row["title"], combined, clerk_id)
-            _sessions[session_id] = combined
-            swarm_clusters = offset_new # Only swarm the new ones
+            db.save_notebook(session_id, row["title"], combined, clerk_id, source_type="pdf")
+            # Re-convert to int keys for in-memory session
+            _sessions[session_id] = {int(k): v for k, v in combined.items()}
+            swarm_clusters = {int(k): v for k, v in offset_new.items()} # Only swarm the new ones
         else:
-            db.save_notebook(session_id, title, new_clusters, clerk_id)
+            db.save_notebook(session_id, title, new_clusters, clerk_id, source_type="pdf")
             _sessions[session_id] = new_clusters
             swarm_clusters = new_clusters
 
@@ -492,18 +503,19 @@ def _run_url_ingestion_background(session_id: str, url: str, clerk_id: str) -> N
         db.update_status(session_id, "ingesting")
         
         new_clusters = ingest_url(url)
+        new_clusters_str = {str(k): v for k, v in new_clusters.items()}
         
         # Merge clusters if appending
         if existing_clusters:
             existing_keys = [int(k) for k in existing_clusters.keys()]
             offset = max(existing_keys) + 1 if existing_keys else 0
-            offset_new = {k + offset: v for k, v in new_clusters.items()}
+            offset_new = {str(int(k) + offset): v for k, v in new_clusters_str.items()}
             combined = {**existing_clusters, **offset_new}
-            db.save_notebook(session_id, row["title"], combined, clerk_id)
-            _sessions[session_id] = combined
-            swarm_clusters = offset_new
+            db.save_notebook(session_id, row["title"], combined, clerk_id, source_type="url")
+            _sessions[session_id] = {int(k): v for k, v in combined.items()}
+            swarm_clusters = {int(k): v for k, v in offset_new.items()}
         else:
-            db.save_notebook(session_id, url.split("//")[-1].split("/")[0], new_clusters, clerk_id)
+            db.save_notebook(session_id, url.split("//")[-1].split("/")[0], new_clusters, clerk_id, source_type="url")
             _sessions[session_id] = new_clusters
             swarm_clusters = new_clusters
 
@@ -764,14 +776,14 @@ async def get_notebooks(user: ClerkUser = Depends(get_current_user)) -> Notebook
     Results are ordered by newest first and exclude heavy payload data like clusters_json.
     """
     rows = db.get_notebooks_for_user(user.clerk_id)
-    summaries = []
-    for r in rows:
-        summaries.append(
-            NotebookSummary(
-                id=r["id"],
-                title=r["title"],
-                status=r["status"],
-                created_at=r["created_at"],
-            )
+    notebooks = [
+        NotebookSummary(
+            id=r["id"],
+            title=r["title"],
+            status=r["status"],
+            created_at=r["created_at"],
+            source_type=r["source_type"] if "source_type" in r.keys() else "pdf"
         )
-    return NotebooksResponse(notebooks=summaries)
+        for r in rows
+    ]
+    return NotebooksResponse(notebooks=notebooks)

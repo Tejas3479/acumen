@@ -25,6 +25,7 @@ from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, Tool
 from langchain_core.tools import tool
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langgraph.prebuilt import create_react_agent
+from langchain_community.tools import DuckDuckGoSearchRun
 
 from engine.wiki_swarm import get_wiki_collection
 from engine.reranker import rerank_documents
@@ -78,12 +79,19 @@ async def _query_wiki(query: str, n_results: int = 25, top_k: int = 5) -> str:
 
 
 def _llm_json(system_prompt: str, user_prompt: str) -> str:
-    """Call gpt-4o-mini and return a clean JSON string."""
+    """Call Gemini Flash and return a clean JSON string."""
     llm = ChatGoogleGenerativeAI(model="gemini-1.5-flash", temperature=0.2, max_tokens=1500)
     resp = llm.invoke(
         [SystemMessage(content=system_prompt), HumanMessage(content=user_prompt)]
     )
-    raw = resp.content.strip()
+    
+    raw = ""
+    if isinstance(resp.content, list):
+        raw = " ".join([item.get("text", "") for item in resp.content if isinstance(item, dict) and "text" in item])
+    else:
+        raw = str(resp.content)
+        
+    raw = raw.strip()
     
     # Robustly extract JSON block (array or object)
     start_obj = raw.find("{")
@@ -204,10 +212,18 @@ async def generate_creator_script(query: str) -> str:
 
 
 # ---------------------------------------------------------------------------
-from langchain_community.tools import DuckDuckGoSearchRun
-web_search_tool = DuckDuckGoSearchRun()
-
+# Tool 5 — live_web_search
 # ---------------------------------------------------------------------------
+
+@tool
+async def live_web_search(query: str) -> str:
+    """Execute a live DuckDuckGo web search. 
+    Use ONLY when local knowledge is insufficient or you need up-to-date info.
+    Input: the search query.
+    """
+    search = DuckDuckGoSearchRun()
+    res = search.run(query)
+    return f"[SEARCH_SOURCE: DUCKDUCKGO]\n{res}"
 # Tool 6 — generate_tweet_thread
 # ---------------------------------------------------------------------------
 
@@ -240,15 +256,6 @@ async def generate_tweet_thread(query: str) -> str:
     return json.dumps(parsed)
 
 
-# ---------------------------------------------------------------------------
-@tool
-async def live_web_search(query: str) -> str:
-    """Execute a live DuckDuckGo web search. 
-    Use ONLY when local knowledge is insufficient.
-    """
-    search = DuckDuckGoSearchRun()
-    res = search.run(query)
-    return f"[SEARCH_SOURCE: DUCKDUCKGO]\n{res}"
 
 # ---------------------------------------------------------------------------
 # Tool registry — plain list of @tool-decorated functions

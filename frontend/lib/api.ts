@@ -2,7 +2,7 @@
 // BASE is set via NEXT_PUBLIC_BACKEND_URL in .env.local
 // Falls back to localhost for local dev without the env var.
 
-const BASE = process.env.NEXT_PUBLIC_BACKEND_URL ?? "http://localhost:8000";
+export const BASE = process.env.NEXT_PUBLIC_BACKEND_URL ?? "http://localhost:8000";
 
 type FetchOpts = RequestInit & { token?: string | null };
 
@@ -25,17 +25,29 @@ async function fetchAPI(endpoint: string, opts: RequestInit = {}) {
   try {
     const res = await fetch(url, opts);
     if (!res.ok) {
-      const errorData = await res.json().catch(() => ({}));
-      throw new Error(errorData.detail ?? `API error: ${res.status} ${res.statusText}`);
+      let detail = `API error: ${res.status} ${res.statusText}`;
+      try {
+        const errorData = await res.json();
+        detail = errorData.detail ?? detail;
+      } catch (e) {
+        // Fallback if not JSON
+        const text = await res.text().catch(() => "");
+        if (text) detail = text;
+      }
+      throw new Error(detail);
     }
     return await res.json();
   } catch (err: any) {
     // This catches both 'Failed to Fetch' (network error) and the thrown API errors
     console.error(`❌ [Acumen API Error] URL: ${url}`);
     console.error(`Message: ${err.message}`);
-    console.error("Full Error Object:", err);
+    if (err.stack) console.error("Stack:", err.stack);
     throw err;
   }
+}
+
+export async function fetchNotebooks(token?: string | null) {
+  return fetchAPI("/api/notebooks", withAuth(token));
 }
 
 export async function uploadPDF(file: File, token?: string | null) {

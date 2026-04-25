@@ -12,7 +12,7 @@ interface DropzoneProps {
   compact?: boolean;
 }
 
-const API_BASE_URL = process.env.NEXT_PUBLIC_BACKEND_URL || "http://127.0.0.1:8000";
+import { BASE as API_BASE_URL } from "@/lib/api";
 
 export default function Dropzone({ onUploadComplete, disabled, sessionId, compact }: DropzoneProps) {
   const { getToken } = useAuth();

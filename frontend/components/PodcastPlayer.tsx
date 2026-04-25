@@ -5,7 +5,7 @@ import { Play, Square, Loader2, Headphones } from "lucide-react";
 import { toast } from "sonner";
 import { useAuth } from "@clerk/nextjs";
 
-const API_BASE_URL = process.env.NEXT_PUBLIC_BACKEND_URL || "http://127.0.0.1:8000";
+import { BASE as API_BASE_URL } from "@/lib/api";
 
 interface ScriptLine {
   host: "A" | "B";

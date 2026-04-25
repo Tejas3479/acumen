@@ -132,11 +132,23 @@ def _extract_json_block(text: Any) -> str:
         raw = str(text)
     
     raw = raw.strip()
-    start = raw.find("{")
-    end = raw.rfind("}")
-    if start != -1 and end != -1 and end > start:
-        return raw[start:end+1]
-    return raw
+    
+    # Robustly extract JSON block (array or object)
+    start_obj = raw.find("{")
+    end_obj = raw.rfind("}")
+    start_arr = raw.find("[")
+    end_arr = raw.rfind("]")
+    
+    obj_len = end_obj - start_obj if (start_obj != -1 and end_obj != -1 and end_obj > start_obj) else -1
+    arr_len = end_arr - start_arr if (start_arr != -1 and end_arr != -1 and end_arr > start_arr) else -1
+    
+    if obj_len > -1 or arr_len > -1:
+        if obj_len > arr_len:
+            return raw[start_obj:end_obj+1]
+        else:
+            return raw[start_arr:end_arr+1]
+            
+    return raw.strip()
 
 def _synthesize_cluster(cluster_id: int, chunks: List[str]) -> WikiPage:
     llm = ChatGoogleGenerativeAI(model="gemini-1.5-flash", temperature=0.3, max_tokens=1024)

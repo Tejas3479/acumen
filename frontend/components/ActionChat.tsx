@@ -8,7 +8,7 @@ import { useAuth } from "@clerk/nextjs";
 import type { ChatMessage, ChatResponse, WikiPage } from "@/lib/types";
 import ToolOutput from "@/components/ToolOutput";
 
-const API_BASE_URL = process.env.NEXT_PUBLIC_BACKEND_URL || "http://127.0.0.1:8000";
+import { BASE as API_BASE_URL } from "@/lib/api";
 
 interface ActionChatProps {
   sessionId: string | null;
@@ -121,9 +121,18 @@ export default function ActionChat({ sessionId, wikiPages, initialMessages = [],
     setInput("");
     if (textareaRef.current) textareaRef.current.style.height = "auto";
 
-    const history: ChatMessage[] = messages
-      .filter((m) => !m.toolUsed)
-      .map((m) => ({ role: m.role, content: m.content }));
+    const history: ChatMessage[] = messages.map((m) => {
+      if (m.toolUsed && m.toolOutput) {
+        const summary = typeof m.toolOutput === 'string' 
+          ? m.toolOutput 
+          : JSON.stringify(m.toolOutput);
+        return { 
+          role: m.role, 
+          content: `${m.content}\n\n[Tool Result (${m.toolUsed}): ${summary}]` 
+        };
+      }
+      return { role: m.role, content: m.content };
+    });
 
     setMessages((prev) => [...prev, { role: "user", content: userMsg }]);
     setLoading(true);

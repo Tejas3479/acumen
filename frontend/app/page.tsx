@@ -222,6 +222,7 @@ function LandingPage() {
 // ─────────────────────────────────────────────
 function Dashboard() {
   const { getToken } = useAuth();
+  const { isSignedIn } = useUser();
 
   const [appState, setAppState] = useState<AppState>("idle");
   const [notebooks, setNotebooks] = useState<Notebook[]>([]);
@@ -243,7 +244,10 @@ function Dashboard() {
   // Helper: fetch with Clerk auth header
   const authFetch = useCallback(async (url: string, opts: RequestInit = {}) => {
     const token = await getToken();
-    return fetch(url, {
+    // Ensure url starts with / if it's an endpoint, or use as is if full URL
+    const fullUrl = url.startsWith("http") ? url : `${API_BASE_URL}${url.startsWith("/") ? "" : "/"}${url}`;
+    
+    return fetch(fullUrl, {
       ...opts,
       headers: {
         ...(opts.headers ?? {}),
@@ -252,20 +256,53 @@ function Dashboard() {
     });
   }, [getToken]);
 
-  // localStorage persistence
+  // 1. Initial Load: Merge Backend + LocalStorage
   useEffect(() => {
-    try {
-      const stored = localStorage.getItem(STORAGE_KEY);
-      if (stored) {
-        const parsed: Notebook[] = JSON.parse(stored);
-        if (Array.isArray(parsed)) setNotebooks(parsed);
-      }
-    } catch { /* ignore */ }
-  }, []);
+    const loadData = async () => {
+      let merged: Notebook[] = [];
+      
+      // Load from localStorage first (for speed/offline)
+      try {
+        const stored = localStorage.getItem(STORAGE_KEY);
+        if (stored) merged = JSON.parse(stored);
+      } catch {}
 
+      // Fetch from backend to sync
+      try {
+        const token = await getToken();
+        if (token) {
+          const res = await authFetch("/api/notebooks");
+          if (res.ok) {
+            const data = await res.json();
+            const backendNotebooks: Notebook[] = data.notebooks.map((n: any) => ({
+              id: n.id,
+              title: n.title,
+              status: n.status,
+              created_at: n.created_at,
+              history: merged.find(m => m.id === n.id)?.history || [], // Keep local history if exists
+            }));
+            
+            // Merge: Backend is source of truth for IDs, but we keep local history
+            merged = backendNotebooks;
+          }
+        }
+      } catch (err) {
+        console.error("Failed to sync with backend:", err);
+      }
+
+      setNotebooks(merged);
+    };
+
+    if (isSignedIn) loadData();
+  }, [isSignedIn, getToken, authFetch]);
+
+  // 2. Persist to localStorage whenever notebooks change
   useEffect(() => {
-    try { localStorage.setItem(STORAGE_KEY, JSON.stringify(notebooks)); }
-    catch { /* quota */ }
+    try { 
+      if (notebooks.length > 0) {
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(notebooks)); 
+      }
+    } catch { /* quota */ }
   }, [notebooks]);
 
   // Wave-bar keyframes
@@ -330,7 +367,7 @@ function Dashboard() {
     stopPolling();
     pollRef.current = setInterval(async () => {
       try {
-        const res = await authFetch(`${API_BASE_URL}/status/${sid}`);
+        const res = await authFetch(`/status/${sid}`);
         if (!res.ok) { stopPolling(); stopProgress(); setAppState("error"); toast.error("Synthesis failed on server."); return; }
         const data: StatusResponse = await res.json();
         if (data.status === "completed") {
@@ -353,7 +390,7 @@ function Dashboard() {
     setFilename(fname);
     setNotebooks((prev) => prev.some((nb) => nb.id === sid) ? prev : [...prev, { id: sid, title: fname, history: [], sourceType: "pdf", created_at: new Date().toISOString() }]);
     try {
-      const res = await authFetch(`${API_BASE_URL}/synthesize/${sid}`, { method: "POST" });
+      const res = await authFetch(`/synthesize/${sid}`, { method: "POST" });
       const data = await res.json();
       
       // Even if /upload didn't return completed, we start polling immediately

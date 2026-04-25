@@ -8,13 +8,14 @@ python-multipart==0.0.9
 PyPDF2==3.0.1
 
 # LangChain Ecosystem
-langchain==0.2.5
-langchain-google-genai==2.0.1
-langchain-community==0.2.5
-langchain-text-splitters>=0.2.0
+langchain
+langchain-core
+langchain-google-genai
+langchain-community
+langchain-text-splitters
 
 # LangGraph
-langgraph==0.1.15
+langgraph
 
 # Vector Store (in-memory)
 chromadb==0.5.0

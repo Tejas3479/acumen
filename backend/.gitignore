@@ -1,0 +1,22 @@
+# Backend .gitignore
+
+# Virtual Environment
+venv/
+
+# Secrets
+.env
+
+# Local Data
+chroma_db/
+acumen.db
+data/
+scratch/
+
+# Python Cache
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+.coverage
+htmlcov/

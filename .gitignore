@@ -1,0 +1,26 @@
+# Root .gitignore for Acumen Monorepo
+
+# Secrets
+.env
+.env.local
+backend/.env
+frontend/.env.local
+
+# Dependencies
+node_modules/
+backend/venv/
+frontend/node_modules/
+
+# Local data & logs
+backend/chroma_db/
+backend/acumen.db
+backend/data/
+backend/scratch/
+__pycache__/
+backend/__pycache__/
+frontend/.next/
+frontend/out/
+
+# OS specific
+.DS_Store
+Thumbs.db

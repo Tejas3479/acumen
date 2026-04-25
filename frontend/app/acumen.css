@@ -1,0 +1,226 @@
+/* Acumen — Design System Additions */
+
+/* Acumen colour tokens */
+:root {
+  --acumen-bg: #0a0a0f;
+  --acumen-surface: #111118;
+  --acumen-surface-2: #17171f;
+  --acumen-border: rgba(255, 255, 255, 0.07);
+  --acumen-purple: #7c3aed;
+  --acumen-purple-glow: rgba(124, 58, 237, 0.35);
+  --acumen-cyan: #06b6d4;
+  --acumen-green: #10b981;
+  --acumen-text: #e2e8f0;
+  --acumen-muted: #64748b;
+}
+
+/* Base dark overrides */
+.dark {
+  --background: oklch(0.07 0.01 265);
+  --card: oklch(0.11 0.01 265);
+  --border: oklch(1 0 0 / 7%);
+  --primary: oklch(0.62 0.22 265);
+}
+
+/* Glassmorphism card */
+.glass-card {
+  background: rgba(17, 17, 24, 0.7);
+  backdrop-filter: blur(16px) saturate(180%);
+  border: 1px solid var(--acumen-border);
+  border-radius: 14px;
+}
+
+/* Glow effects */
+.glow-purple {
+  box-shadow: 0 0 24px var(--acumen-purple-glow),
+              0 0 60px rgba(124, 58, 237, 0.1);
+}
+
+.glow-purple-sm {
+  box-shadow: 0 0 10px var(--acumen-purple-glow);
+}
+
+/* Gradient text */
+.gradient-text {
+  background: linear-gradient(135deg, #a78bfa 0%, #38bdf8 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+/* Dropzone */
+.dropzone {
+  border: 2px dashed var(--acumen-border);
+  border-radius: 14px;
+  transition: all 0.25s ease;
+  cursor: pointer;
+}
+.dropzone:hover,
+.dropzone.active {
+  border-color: var(--acumen-purple);
+  background: rgba(124, 58, 237, 0.06);
+  box-shadow: 0 0 20px var(--acumen-purple-glow);
+}
+
+/* Scrollbars */
+::-webkit-scrollbar { width: 5px; height: 5px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.1); border-radius: 99px; }
+::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.2); }
+
+/* React Flow overrides */
+.react-flow__background { background: var(--acumen-bg) !important; }
+.react-flow__edge-path { stroke: #7c3aed; }
+.react-flow__edge-path.custom-edge { stroke: #06b6d4; }
+.react-flow__controls { background: var(--acumen-surface) !important; border: 1px solid var(--acumen-border) !important; }
+.react-flow__controls button { background: var(--acumen-surface) !important; border-bottom: 1px solid var(--acumen-border) !important; color: #fff !important; }
+.react-flow__controls button:hover { background: var(--acumen-surface-2) !important; }
+.react-flow__minimap { background: var(--acumen-surface) !important; border: 1px solid var(--acumen-border) !important; border-radius: 8px; }
+
+/* Chat bubbles */
+.chat-bubble-user {
+  background: linear-gradient(135deg, #7c3aed, #4f46e5);
+  border-radius: 18px 18px 4px 18px;
+}
+.chat-bubble-ai {
+  background: var(--acumen-surface-2);
+  border: 1px solid var(--acumen-border);
+  border-radius: 18px 18px 18px 4px;
+}
+
+/* Skeleton shimmer */
+@keyframes shimmer {
+  0% { background-position: -400px 0; }
+  100% { background-position: 400px 0; }
+}
+.skeleton {
+  background: linear-gradient(90deg, #17171f 25%, #1e1e2e 50%, #17171f 75%);
+  background-size: 800px 100%;
+  animation: shimmer 1.4s infinite;
+  border-radius: 8px;
+}
+
+/* Pulse dot */
+@keyframes pulse-dot {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.3; }
+}
+.pulse-dot {
+  width: 8px; height: 8px;
+  border-radius: 50%;
+  background: var(--acumen-green);
+  animation: pulse-dot 1.5s ease-in-out infinite;
+}
+
+/* Web augmented badge glow */
+.badge-web {
+  background: rgba(6, 182, 212, 0.15);
+  border: 1px solid rgba(6, 182, 212, 0.4);
+  color: #06b6d4;
+  animation: badge-glow 2s ease-in-out infinite;
+}
+
+@keyframes badge-glow {
+  0%, 100% { box-shadow: 0 0 6px rgba(6, 182, 212, 0.4); }
+  50%       { box-shadow: 0 0 14px rgba(6, 182, 212, 0.8); }
+}
+
+/* ── Flip Cards ──────────────────────────────────────────────────────── */
+.flip-card {
+  perspective: 1000px;
+  height: 160px;
+  cursor: pointer;
+}
+
+.flip-card-inner {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  transition: transform 0.55s cubic-bezier(0.4, 0, 0.2, 1);
+  transform-style: preserve-3d;
+}
+
+.flip-card.is-flipped .flip-card-inner {
+  transform: rotateY(180deg);
+}
+
+.flip-card-front,
+.flip-card-back {
+  position: absolute;
+  inset: 0;
+  border-radius: 14px;
+  backface-visibility: hidden;
+  -webkit-backface-visibility: hidden;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.flip-card-front {
+  background: rgba(17, 17, 24, 0.95);
+  border: 1px solid rgba(124, 58, 237, 0.25);
+}
+
+.flip-card-back {
+  background: linear-gradient(135deg, rgba(124, 58, 237, 0.18) 0%, rgba(17, 17, 24, 0.97) 100%);
+  border: 1px solid rgba(124, 58, 237, 0.5);
+  transform: rotateY(180deg);
+}
+
+.flip-card:hover .flip-card-front {
+  border-color: rgba(124, 58, 237, 0.5);
+  box-shadow: 0 0 16px rgba(124, 58, 237, 0.2);
+}
+
+/* ── Action Palette ──────────────────────────────────────────────────── */
+.action-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 12px;
+  border-radius: 99px;
+  font-size: 11px;
+  font-weight: 500;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(255, 255, 255, 0.04);
+  color: #94a3b8;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  white-space: nowrap;
+}
+
+.action-pill:hover:not(:disabled) {
+  border-color: rgba(124, 58, 237, 0.5);
+  background: rgba(124, 58, 237, 0.1);
+  color: #a78bfa;
+  box-shadow: 0 0 10px rgba(124, 58, 237, 0.2);
+}
+
+.action-pill:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
+/* ── Arch card icon badge ────────────────────────────────────────────── */
+.arch-icon-badge {
+  width: 28px;
+  height: 28px;
+  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+/* ── Checklist item ──────────────────────────────────────────────────── */
+.task-item {
+  transition: background 0.15s ease;
+}
+.task-item:hover {
+  background: rgba(255, 255, 255, 0.03);
+}
+.task-item.checked .task-label {
+  text-decoration: line-through;
+  color: #475569;
+}
+

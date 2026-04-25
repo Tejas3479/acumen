@@ -142,11 +142,14 @@ function LandingPage() {
           >
             <SignUpButton mode="modal">
               <button className="px-8 py-4 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-medium text-lg transition-all shadow-[0_0_25px_rgba(99,102,241,0.4)] hover:shadow-[0_0_35px_rgba(99,102,241,0.6)] hover:scale-[1.02]">
-                Get Started Free
+                Initialize Workspace
               </button>
             </SignUpButton>
-            <button className="px-8 py-4 rounded-xl border border-white/[0.08] bg-white/[0.03] backdrop-blur-xl text-white font-medium text-lg hover:bg-white/[0.06] transition-all">
-              View Showcase
+            <button 
+              onClick={() => toast.success("Loading Demo Workspace...", { description: "Syncing with Acumen Prime Swarm." })}
+              className="px-8 py-4 rounded-xl border border-white/[0.08] bg-white/[0.03] backdrop-blur-xl text-white font-medium text-lg hover:bg-white/[0.06] transition-all"
+            >
+              Live Demo
             </button>
           </motion.div>
         </section>
@@ -205,6 +208,30 @@ function LandingPage() {
             </div>
           </motion.div>
         </motion.div>
+
+        {/* Stats Section */}
+        <section className="mt-32 pt-24 border-t border-white/[0.08]">
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-8">
+            {[
+              { label: "Semantic Clusters", value: "1,420+" },
+              { label: "Synthesis Latency", value: "0.8s" },
+              { label: "Token Efficiency", value: "94%" },
+              { label: "Active Swarms", value: "12k+" },
+            ].map((s, i) => (
+              <motion.div 
+                key={i}
+                initial={{ opacity: 0, y: 20 }}
+                whileInView={{ opacity: 1, y: 0 }}
+                transition={{ delay: i * 0.1 }}
+                viewport={{ once: true }}
+                className="flex flex-col gap-1"
+              >
+                <div className="text-3xl font-medium text-white">{s.value}</div>
+                <div className="font-mono text-[9px] uppercase tracking-[0.2em] text-indigo-400/60">{s.label}</div>
+              </motion.div>
+            ))}
+          </div>
+        </section>
       </main>
 
       {/* Footer */}

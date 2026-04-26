@@ -8,7 +8,7 @@ logger = logging.getLogger(__name__)
 
 # Initialize the model once for reuse
 # Temperature is 0 for deterministic ranking
-reranker_llm = ChatGoogleGenerativeAI(model="gemini-1.5-flash", temperature=0)
+reranker_llm = ChatGoogleGenerativeAI(model="gemini-2.5-flash", temperature=0)
 
 async def rerank_documents(query: str, documents: List[str], top_k: int = 5) -> List[str]:
     """

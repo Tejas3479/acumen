@@ -175,7 +175,7 @@ def _extract_json_block(text: Any) -> str:
     return raw.strip()
 
 def _synthesize_cluster(cluster_id: int, chunks: List[str]) -> WikiPage:
-    llm = ChatGoogleGenerativeAI(model="gemini-1.5-flash", temperature=0.3, max_tokens=1024)
+    llm = ChatGoogleGenerativeAI(model="gemini-2.5-flash", temperature=0.3, max_tokens=1024)
 
     # Step 2: Context Window Management (15,000 chars)
     combined = "\n\n---\n\n".join(chunks)
@@ -472,7 +472,7 @@ def build_reactflow_data(session_id: str) -> Dict[str, Any]:
 
     edges = []
     try:
-        llm = ChatGoogleGenerativeAI(model="gemini-1.5-flash", temperature=0.2, max_tokens=256)
+        llm = ChatGoogleGenerativeAI(model="gemini-2.5-flash", temperature=0.2, max_tokens=256)
         resp = llm.invoke([HumanMessage(content=edge_prompt)])
         raw = resp.content.strip()
         if raw.startswith("```"):

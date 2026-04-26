@@ -34,7 +34,7 @@ def generate_audio_script(session_id: str) -> List[Dict[str, str]]:
         if len(text_content) > 10000:
             text_content = text_content[:10000]
 
-        llm = ChatGoogleGenerativeAI(model="gemini-1.5-flash", temperature=0.7)
+        llm = ChatGoogleGenerativeAI(model="gemini-2.5-flash", temperature=0.7)
         
         resp = llm.invoke([
             SystemMessage(content=SYSTEM_PROMPT),

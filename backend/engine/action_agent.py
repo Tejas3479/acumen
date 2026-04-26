@@ -80,7 +80,7 @@ async def _query_wiki(query: str, n_results: int = 25, top_k: int = 5) -> str:
 
 def _llm_json(system_prompt: str, user_prompt: str) -> str:
     """Call Gemini Flash and return a clean JSON string."""
-    llm = ChatGoogleGenerativeAI(model="gemini-1.5-flash", temperature=0.2, max_tokens=1500)
+    llm = ChatGoogleGenerativeAI(model="gemini-2.5-flash", temperature=0.2, max_tokens=1500)
     resp = llm.invoke(
         [SystemMessage(content=system_prompt), HumanMessage(content=user_prompt)]
     )
@@ -398,7 +398,7 @@ async def run_agent_chat(
     # Set the module-level session context BEFORE building tools/agent
     _set_session(session_id)
 
-    model = ChatGoogleGenerativeAI(model="gemini-1.5-flash", temperature=0, max_tokens=2048)
+    model = ChatGoogleGenerativeAI(model="gemini-2.5-flash", temperature=0, max_tokens=2048)
     agent = create_react_agent(model, TOOLS)
 
     msgs: List = [SystemMessage(content=SYSTEM_PROMPT)]

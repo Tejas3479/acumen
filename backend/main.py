@@ -324,6 +324,7 @@ class Database:
                 (history_json, session_id),
             )
             conn.commit()
+        logger.info("Chat history updated for session %s (%d messages).", session_id, len(history))
 
     def get_notebook(self, session_id: str) -> Optional[sqlite3.Row]:
         """Fetch a single notebook row by session_id."""
@@ -798,17 +799,24 @@ async def get_notebooks(user: ClerkUser = Depends(get_current_user)) -> Notebook
     Results are ordered by newest first and exclude heavy payload data like clusters_json.
     """
     rows = db.get_notebooks_for_user(user.clerk_id)
-    notebooks = [
-        NotebookSummary(
+    notebooks = []
+    for r in rows:
+        history = []
+        try:
+            # history_json column might be missing if migration hasn't run yet
+            if "history_json" in r.keys() and r["history_json"]:
+                history = json.loads(r["history_json"])
+        except Exception:
+            pass
+            
+        notebooks.append(NotebookSummary(
             id=r["id"],
             title=r["title"],
             status=r["status"],
             created_at=r["created_at"],
             source_type=r["source_type"] if "source_type" in r.keys() else "pdf",
-            history=json.loads(r["history_json"]) if "history_json" in r.keys() and r["history_json"] else []
-        )
-        for r in rows
-    ]
+            history=history
+        ))
     return NotebooksResponse(notebooks=notebooks)
 
 

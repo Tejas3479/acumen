@@ -38,7 +38,7 @@ export default function Sidebar({
           className="flex items-center justify-center w-full gap-2 px-4 py-2.5 text-xs font-mono uppercase tracking-[0.2em] text-white transition-all bg-indigo-600 rounded-xl hover:bg-indigo-500 shadow-[0_0_15px_rgba(79,70,229,0.2)] hover:shadow-[0_0_25px_rgba(79,70,229,0.4)]"
         >
           <Plus className="w-3.5 h-3.5" />
-          Initialize
+          New Knowledge Base
         </button>
       </div>
 

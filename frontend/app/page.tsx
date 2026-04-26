@@ -254,7 +254,17 @@ function Dashboard() {
 
   const [appState, setAppState] = useState<AppState>("idle");
   const [notebooks, setNotebooks] = useState<Notebook[]>([]);
+  const hasLoadedInitialRef = useRef(false);
   const [sessionId, setSessionId] = useState<string | null>(null);
+
+  // Persistence: Save active sessionId to localStorage
+  useEffect(() => {
+    if (sessionId) {
+      localStorage.setItem("acumen_active_session", sessionId);
+    } else {
+      localStorage.removeItem("acumen_active_session");
+    }
+  }, [sessionId]);
   const [filename, setFilename] = useState<string>("");
   const [graphNodes, setGraphNodes] = useState<Node[]>([]);
   const [graphEdges, setGraphEdges] = useState<Edge[]>([]);
@@ -407,6 +417,7 @@ function Dashboard() {
     stopPolling(); stopProgress();
     setSessionId(null); setFilename(""); setGraphNodes([]); setGraphEdges([]);
     setWikiPages([]); setProgressValue(0); setAppState("idle");
+    toast("Switched to Dashboard", { icon: "🏠" });
   }, [stopPolling, stopProgress]);
 
   const handleSelectNotebook = useCallback(async (id: string) => {
@@ -425,12 +436,16 @@ function Dashboard() {
       nb.id === sessionId ? { ...nb, history: messages } : nb
     ));
 
-    // 2. Persist to backend (fire and forget)
+    // 2. Persist to backend
     try {
+      console.log(`[Persistence] Syncing ${messages.length} messages for session ${sessionId}`);
       authFetch(`/api/notebooks/${sessionId}/history`, {
         method: "POST",
         body: JSON.stringify(messages),
         headers: { "Content-Type": "application/json" }
+      }).then(res => {
+        if (res.ok) console.log("[Persistence] History synced successfully");
+        else console.error("[Persistence] History sync failed:", res.status);
       });
     } catch (e) {
       console.warn("Failed to persist history to backend:", e);
@@ -458,17 +473,21 @@ function Dashboard() {
           
           setNotebooks(backendNotebooks);
 
-          // AUTO-LOAD: If we have notebooks and no active session, load the first one
-          if (backendNotebooks.length > 0 && !sessionId) {
-            const latest = backendNotebooks[0];
-            setSessionId(latest.id);
-            setFilename(latest.title);
-            if (latest.status === "completed") {
-              loadGraphForSession(latest.id);
-            } else if (latest.status === "processing" || latest.status === "synthesizing") {
+          // AUTO-RESTORE: Try to restore session from localStorage or load latest
+          const savedSessionId = localStorage.getItem("acumen_active_session");
+          const targetSession = (savedSessionId && backendNotebooks.find(n => n.id === savedSessionId)) 
+            ? backendNotebooks.find(n => n.id === savedSessionId)
+            : (backendNotebooks.length > 0 ? backendNotebooks[0] : null);
+
+          if (targetSession) {
+            setSessionId(targetSession.id);
+            setFilename(targetSession.title);
+            if (targetSession.status === "completed") {
+              loadGraphForSession(targetSession.id);
+            } else if (targetSession.status === "processing" || targetSession.status === "synthesizing") {
               setAppState("synthesizing");
               startProgress();
-              startPolling(latest.id);
+              startPolling(targetSession.id);
             }
           }
         }
@@ -477,7 +496,10 @@ function Dashboard() {
       }
     };
 
-    if (isSignedIn) loadData();
+    if (isSignedIn && !hasLoadedInitialRef.current) {
+      loadData();
+      hasLoadedInitialRef.current = true;
+    }
   }, [isSignedIn, getToken, authFetch, sessionId, loadGraphForSession, startPolling, startProgress]);
 
   return (
@@ -548,9 +570,110 @@ function Dashboard() {
           />
         </header>
 
-        {/* Split Pane */}
+        {/* Main Content Area */}
         <div className="flex flex-1 overflow-hidden">
-          {/* LEFT — Graph */}
+          {appState === "idle" ? (
+            /* FULL WIDTH DASHBOARD */
+            <div className="flex-1 overflow-y-auto custom-scrollbar bg-[var(--acumen-bg)]">
+              <div className="max-w-6xl mx-auto flex flex-col px-8 py-12 gap-12 animate-in fade-in slide-in-from-bottom-4 duration-1000">
+                <div className="flex flex-col gap-2">
+                  <h2 className="text-4xl font-bold text-white tracking-tight">Welcome to your Workspace</h2>
+                  <p className="text-slate-400 text-lg">Your executable knowledge base is ready. Select a notebook or upload a new source.</p>
+                </div>
+
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+                  {/* Upload Card */}
+                  <div className="p-10 rounded-[2.5rem] bg-white/[0.03] border border-white/10 backdrop-filter blur-2xl hover:bg-white/[0.05] transition-all group relative overflow-hidden">
+                    <div className="absolute top-0 right-0 p-10 opacity-5 group-hover:opacity-10 transition-opacity">
+                      <Plus className="w-40 h-40 text-white" />
+                    </div>
+                    <div className="relative z-10 space-y-8">
+                      <div className="w-14 h-14 rounded-2xl bg-[#7c3aed]/20 border border-[#7c3aed]/30 flex items-center justify-center">
+                        <Plus className="w-7 h-7 text-[#a78bfa]" />
+                      </div>
+                      <div>
+                        <h3 className="text-2xl font-bold text-white mb-3">Create New Notebook</h3>
+                        <p className="text-slate-400 leading-relaxed">Upload a PDF or paste a URL to initialize a new Knowledge Graph and Agent context.</p>
+                      </div>
+                      <IngestionEngine mode="hero" onUploadComplete={handleUploadComplete} onStartSynthesis={handleStartSynthesis} />
+                    </div>
+                  </div>
+
+                  {/* Quick Stats Card */}
+                  <div className="p-10 rounded-[2.5rem] bg-[#7c3aed]/5 border border-[#7c3aed]/20 backdrop-filter blur-2xl relative overflow-hidden">
+                     <div className="flex flex-col h-full justify-between gap-10">
+                       <div className="space-y-2">
+                          <h3 className="text-2xl font-bold text-white">Library Insights</h3>
+                          <p className="text-slate-400">Total knowledge coverage across your sessions.</p>
+                       </div>
+                       <div className="grid grid-cols-2 gap-6">
+                          <div className="p-6 rounded-[2rem] bg-black/40 border border-white/5">
+                             <span className="text-[11px] uppercase tracking-[0.2em] text-slate-500 font-bold">Total Vaults</span>
+                             <div className="text-4xl font-bold text-white mt-2">{notebooks.length}</div>
+                          </div>
+                          <div className="p-6 rounded-[2rem] bg-black/40 border border-white/5">
+                             <span className="text-[11px] uppercase tracking-[0.2em] text-slate-500 font-bold">Processed</span>
+                             <div className="text-4xl font-bold text-[#10b981] mt-2">{notebooks.filter(n => n.status === "completed").length}</div>
+                          </div>
+                       </div>
+                       <div className="flex items-center gap-3 text-sm text-[#a78bfa] bg-[#7c3aed]/10 px-4 py-2.5 rounded-2xl w-fit border border-[#7c3aed]/20">
+                          <Zap className="w-4 h-4 fill-[#a78bfa]" />
+                          <span className="font-semibold tracking-wide">Gemini 2.5 Flash Powered</span>
+                       </div>
+                     </div>
+                  </div>
+                </div>
+
+                {/* Recent Activity List */}
+                <div className="space-y-6 pb-20">
+                  <div className="flex items-center justify-between border-b border-white/5 pb-4">
+                    <h3 className="text-xs font-bold text-slate-500 uppercase tracking-[0.25em] flex items-center gap-2.5">
+                      <HistoryIcon className="w-4 h-4" /> Recent Knowledge Vaults
+                    </h3>
+                  </div>
+                  {notebooks.length > 0 ? (
+                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                      {notebooks.slice(0, 9).map((nb) => (
+                        <button 
+                          key={nb.id}
+                          onClick={() => handleSelectNotebook(nb.id)}
+                          className="flex flex-col items-start p-6 rounded-3xl bg-white/[0.015] border border-white/5 hover:border-[#7c3aed]/40 hover:bg-white/[0.04] transition-all text-left group hover:translate-y-[-4px] duration-300 shadow-xl"
+                        >
+                          <div className="flex items-center gap-4 mb-4 w-full">
+                            <div className="w-12 h-12 rounded-xl bg-white/5 border border-white/10 flex items-center justify-center group-hover:bg-[#7c3aed]/20 transition-colors">
+                              {nb.sourceType === "url" ? <GitBranch className="w-5 h-5 text-blue-400" /> : <Library className="w-5 h-5 text-[#a78bfa]" />}
+                            </div>
+                            <div className="flex-1 truncate">
+                              <div className="text-base font-bold text-white truncate group-hover:text-[#a78bfa] transition-colors">{nb.title}</div>
+                              <div className="text-[11px] text-slate-500 font-mono mt-0.5">{new Date(nb.created_at || "").toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })}</div>
+                            </div>
+                          </div>
+                          <div className="flex items-center gap-3 text-xs text-slate-500 w-full pt-4 border-t border-white/5">
+                             <div className="flex items-center gap-1.5 bg-white/5 px-2.5 py-1 rounded-lg">
+                               <MessageSquare className="w-3 h-3" />
+                               <span>{nb.history?.length || 0}</span>
+                             </div>
+                             <div className={`ml-auto flex items-center gap-1.5 px-2.5 py-1 rounded-lg ${nb.status === "completed" ? "bg-emerald-500/10 text-emerald-500" : "bg-amber-500/10 text-amber-500"}`}>
+                               <div className={`w-1.5 h-1.5 rounded-full ${nb.status === "completed" ? "bg-emerald-500" : "bg-amber-500 animate-pulse"}`} />
+                               <span className="text-[10px] font-bold uppercase tracking-wider">{nb.status}</span>
+                             </div>
+                          </div>
+                        </button>
+                      ))}
+                    </div>
+                  ) : (
+                    <div className="p-20 border-2 border-dashed border-white/5 rounded-[3rem] flex flex-col items-center justify-center gap-4 text-center">
+                       <Library className="w-12 h-12 text-slate-700" />
+                       <div className="text-slate-500">No notebooks yet. Upload your first source to begin.</div>
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+          ) : (
+            /* SPLIT PANE WORKSPACE */
+            <>
+              {/* LEFT — Graph */}
           <div
             className={`flex flex-col border-r border-white/8 transition-all duration-300 ${activePanel === "chat" ? "hidden md:flex" : "flex"} md:flex`}
             style={{ width: "58%", minWidth: 0, background: "var(--acumen-surface)" }}
@@ -613,90 +736,6 @@ function Dashboard() {
                 </div>
               )}
 
-              {/* Idle state (The Dashboard Overview) */}
-              {appState === "idle" && (
-                <div className="flex flex-col h-full px-8 py-10 overflow-y-auto custom-scrollbar gap-10 animate-in fade-in slide-in-from-bottom-4 duration-700">
-                  <div className="flex flex-col gap-2">
-                    <h2 className="text-3xl font-bold text-white tracking-tight">Welcome back</h2>
-                    <p className="text-slate-400">Your executable knowledge base is ready. What are we studying today?</p>
-                  </div>
-
-                  <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                    {/* Upload Card */}
-                    <div className="p-8 rounded-3xl bg-white/[0.03] border border-white/10 backdrop-filter blur-xl hover:bg-white/[0.05] transition-all group relative overflow-hidden">
-                      <div className="absolute top-0 right-0 p-8 opacity-5 group-hover:opacity-10 transition-opacity">
-                        <Plus className="w-32 h-32 text-white" />
-                      </div>
-                      <div className="relative z-10 space-y-6">
-                        <div className="w-12 h-12 rounded-2xl bg-[#7c3aed]/20 border border-[#7c3aed]/30 flex items-center justify-center">
-                          <Plus className="w-6 h-6 text-[#a78bfa]" />
-                        </div>
-                        <div>
-                          <h3 className="text-xl font-bold text-white mb-2">New Notebook</h3>
-                          <p className="text-sm text-slate-400">Upload a PDF or paste a URL to create a fresh Knowledge Graph.</p>
-                        </div>
-                        <IngestionEngine mode="hero" onUploadComplete={handleUploadComplete} onStartSynthesis={handleStartSynthesis} />
-                      </div>
-                    </div>
-
-                    {/* Quick Stats Card */}
-                    <div className="p-8 rounded-3xl bg-[#7c3aed]/5 border border-[#7c3aed]/20 backdrop-filter blur-xl relative overflow-hidden">
-                       <div className="flex flex-col h-full justify-between gap-8">
-                         <div className="space-y-1">
-                            <h3 className="text-xl font-bold text-white">Workspace Health</h3>
-                            <p className="text-sm text-slate-400">Activity summary for your library.</p>
-                         </div>
-                         <div className="grid grid-cols-2 gap-4">
-                            <div className="p-4 rounded-2xl bg-black/40 border border-white/5">
-                               <span className="text-[10px] uppercase tracking-widest text-slate-500 font-bold">Total Notebooks</span>
-                               <div className="text-2xl font-bold text-white mt-1">{notebooks.length}</div>
-                            </div>
-                            <div className="p-4 rounded-2xl bg-black/40 border border-white/5">
-                               <span className="text-[10px] uppercase tracking-widest text-slate-500 font-bold">Active Sessions</span>
-                               <div className="text-2xl font-bold text-[#10b981] mt-1">{notebooks.filter(n => n.status === "completed").length}</div>
-                            </div>
-                         </div>
-                         <div className="flex items-center gap-2 text-xs text-[#a78bfa] bg-[#7c3aed]/10 px-3 py-2 rounded-xl w-fit">
-                            <Zap className="w-3.5 h-3.5" />
-                            <span>Gemini 2.5 Flash active</span>
-                         </div>
-                       </div>
-                    </div>
-                  </div>
-
-                  {/* Recent Activity List */}
-                  <div className="space-y-4 pb-10">
-                      <h3 className="text-sm font-bold text-slate-400 uppercase tracking-widest flex items-center gap-2">
-                        <HistoryIcon className="w-4 h-4" /> Recent Activity
-                      </h3>
-                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                      {notebooks.slice(0, 6).map((nb) => (
-                        <button 
-                          key={nb.id}
-                          onClick={() => handleSelectNotebook(nb.id)}
-                          className="flex flex-col items-start p-4 rounded-2xl bg-white/[0.02] border border-white/5 hover:border-[#7c3aed]/40 hover:bg-white/[0.04] transition-all text-left group"
-                        >
-                          <div className="flex items-center gap-3 mb-3 w-full">
-                            <div className="p-2 rounded-lg bg-white/5 border border-white/10 group-hover:bg-[#7c3aed]/10 transition-colors">
-                              {nb.sourceType === "url" ? <GitBranch className="w-3.5 h-3.5 text-blue-400" /> : <Library className="w-3.5 h-3.5 text-[#a78bfa]" />}
-                            </div>
-                            <div className="flex-1 truncate">
-                              <div className="text-sm font-bold text-white truncate">{nb.title}</div>
-                              <div className="text-[10px] text-slate-500">{new Date(nb.created_at || "").toLocaleDateString()}</div>
-                            </div>
-                          </div>
-                          <div className="flex items-center gap-1.5 text-[10px] text-slate-400">
-                             <MessageSquare className="w-3 h-3" />
-                             <span>{nb.history?.length || 0} messages</span>
-                             <span className="mx-1">•</span>
-                             <span className={nb.status === "completed" ? "text-[#10b981]" : "text-amber-500"}>{nb.status}</span>
-                          </div>
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-                </div>
-              )}
 
               {/* Ready — graph + Compact Ingestion */}
               {appState === "ready" && (
@@ -734,7 +773,9 @@ function Dashboard() {
               onMessagesChange={handleChatHistoryChange}
             />
           </div>
-        </div>
+        </>
+      )}
+    </div>
 
         <WikiSheet page={selectedPage} open={sheetOpen} onClose={() => setSheetOpen(false)} onObsidianLink={() => {}} />
       </main>

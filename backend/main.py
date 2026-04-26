@@ -184,7 +184,7 @@ class NotebooksResponse(BaseModel):
 # Persistent storage paths — /var/data is Render's mounted disk
 # ---------------------------------------------------------------------------
 
-DATA_DIR: str = os.getenv("ACUMEN_DATA_DIR", "/var/data" if os.name != "nt" else "./data")
+DATA_DIR: str = os.getenv("ACUMEN_DATA_DIR", "./data")
 DB_PATH: str = os.path.join(DATA_DIR, "acumen.db")
 
 # Propagate the ChromaDB path so wiki_swarm picks it up at import time

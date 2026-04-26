@@ -7,15 +7,14 @@ python-multipart==0.0.9
 # PDF Parsing
 PyPDF2==3.0.1
 
-# LangChain Ecosystem
-langchain
-langchain-core
-langchain-google-genai
-langchain-community
-langchain-text-splitters
-
-# LangGraph
-langgraph
+# LangChain Ecosystem & LangGraph
+langchain==0.3.0
+langchain-core==0.3.0
+langchain-community==0.3.0
+langchain-google-genai==2.0.1
+langgraph==0.2.14
+pydantic==2.9.2
+pydantic-settings==2.5.2
 
 # Vector Store (in-memory)
 chromadb==0.5.0
@@ -28,7 +27,6 @@ numpy>=1.24.0
 duckduckgo-search==6.1.7
 
 # Utilities
-pydantic==2.7.1
 python-dotenv==1.0.1
 
 # Auth — Clerk JWT verification

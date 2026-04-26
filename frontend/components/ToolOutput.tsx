@@ -350,6 +350,64 @@ function TwitterThread({ thread }: { thread: string[] }) {
   );
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// 6. OBSIDIAN NOTE — Markdown preview + Copy/Download
+// ─────────────────────────────────────────────────────────────────────────────
+function ObsidianNote({ data }: { data: { filename: string; markdown: string } }) {
+  const [copied, setCopied] = useState(false);
+
+  const handleCopy = () => {
+    navigator.clipboard.writeText(data.markdown);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  };
+
+  const handleDownload = () => {
+    const blob = new Blob([data.markdown], { type: "text/markdown" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = data.filename || "acumen_note.md";
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  return (
+    <div className="mt-3 space-y-3">
+      <div className="flex items-center justify-between px-1">
+        <div className="flex items-center gap-2">
+          <BookOpen className="w-3.5 h-3.5 text-orange-400" />
+          <span className="text-xs font-semibold text-slate-300 uppercase tracking-wider">
+            Obsidian Note
+          </span>
+        </div>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={handleCopy}
+            className="flex items-center gap-1 text-[11px] text-slate-500 hover:text-slate-300 transition-colors"
+          >
+            {copied ? <CheckSquare className="w-3 h-3 text-emerald-500" /> : <RotateCcw className="w-3 h-3" />}
+            {copied ? "Copied" : "Copy"}
+          </button>
+          <button
+            onClick={handleDownload}
+            className="flex items-center gap-1 text-[11px] text-slate-500 hover:text-slate-300 transition-colors"
+          >
+            <Download className="w-3 h-3" /> Download
+          </button>
+        </div>
+      </div>
+
+      <div className="rounded-xl border border-orange-500/20 bg-orange-500/5 p-4 max-h-[300px] overflow-y-auto custom-scrollbar">
+        <p className="text-[10px] font-mono text-orange-500/60 mb-2 uppercase tracking-widest">{data.filename}</p>
+        <pre className="text-xs text-slate-300 whitespace-pre-wrap font-mono leading-relaxed">
+          {data.markdown}
+        </pre>
+      </div>
+    </div>
+  );
+}
+
 export default function ToolOutput({ toolName, output }: ToolOutputProps) {
   if (!output) return null;
 
@@ -372,6 +430,9 @@ export default function ToolOutput({ toolName, output }: ToolOutputProps) {
 
     if (toolName === "generate_tweet_thread" && Array.isArray(output))
       return <TwitterThread thread={output as string[]} />;
+
+    if (toolName === "generate_obsidian_markdown" && typeof output === "object")
+      return <ObsidianNote data={output as { filename: string; markdown: string }} />;
 
     if (toolName === "live_web_search" || toolName === "duckduckgo_search")
       return (

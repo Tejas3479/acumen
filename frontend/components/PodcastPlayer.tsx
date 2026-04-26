@@ -135,14 +135,14 @@ export default function PodcastPlayer({ sessionId }: { sessionId: string | null 
   return (
     <div className="flex flex-col gap-4">
       {/* Header with Play Button */}
-      <div className="flex items-center gap-3 py-1 shrink-0">
-        <div className="flex items-center justify-center w-8 h-8 rounded-full bg-indigo-500/10 border border-indigo-500/20 text-indigo-400">
-          <Headphones className="w-4 h-4" />
+      <div className="flex items-center gap-4 p-4 rounded-xl bg-white/5 border border-white/10 shrink-0 relative z-10 shadow-sm">
+        <div className="flex items-center justify-center w-10 h-10 rounded-full bg-indigo-500/20 border border-indigo-500/30 text-indigo-400">
+          <Headphones className="w-5 h-5" />
         </div>
         
         <div className="flex-1 min-w-0">
-          <div className="text-sm font-semibold text-white/90 truncate">Audio Overview</div>
-          <div className="text-xs text-slate-400 truncate">Deep Dive Podcast</div>
+          <div className="text-base font-bold text-white tracking-tight">Audio Overview</div>
+          <div className="text-xs text-slate-400 font-medium">Deep Dive Podcast</div>
         </div>
         
         {playing && (
@@ -194,7 +194,7 @@ export default function PodcastPlayer({ sessionId }: { sessionId: string | null 
             <div className="h-4 w-1/2 bg-white/5 animate-pulse rounded" />
           </div>
         ) : script.length > 0 ? (
-          script.map((line, i) => (
+          script.map((line: ScriptLine, i: number) => (
             <div key={i} className={`flex flex-col gap-1 ${line.host === "A" ? "items-start" : "items-end"}`}>
               <div className="flex items-center gap-2">
                 <span className={`text-[10px] font-mono uppercase tracking-widest ${line.host === "A" ? "text-indigo-400" : "text-emerald-400"}`}>

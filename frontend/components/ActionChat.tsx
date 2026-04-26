@@ -71,6 +71,7 @@ const ACTIONS = [
   { icon: ListTodo,   label: "Action Items", prompt: "Extract all action items and tasks from this document.", color: "#10b981" },
   { icon: Clapperboard, label: "Creator Script", prompt: "Write a YouTube creator script based on this document.", color: "#f59e0b" },
   { icon: Share2,    label: "Viral Thread", prompt: "Write a 5-part viral Twitter thread based on this document.", color: "#3b82f6" },
+  { icon: BookOpen,   label: "Obsidian Note", prompt: "Format this knowledge into a clean, professional Obsidian Markdown note.", color: "#f97316" },
 ] as const;
 
 // ─────────────────────────────────────────────────────────────────────────────

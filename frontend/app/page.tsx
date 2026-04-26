@@ -384,7 +384,7 @@ function Dashboard() {
     msgIdxRef.current = 0;
     setProgressMessage(SYNTHESIS_MESSAGES[0]);
     progressTimerRef.current = setInterval(() => {
-      setProgressValue((p) => Math.min(p + (90 - p) * 0.07, 89));
+      setProgressValue((p: number) => Math.min(p + (90 - p) * 0.07, 89));
       msgIdxRef.current = (msgIdxRef.current + 1) % SYNTHESIS_MESSAGES.length;
       setProgressMessage(SYNTHESIS_MESSAGES[msgIdxRef.current]);
     }, 1800);
@@ -415,7 +415,7 @@ function Dashboard() {
   const handleUploadComplete = useCallback(async (sid: string, fname: string) => {
     setSessionId(sid);
     setFilename(fname);
-    setNotebooks((prev) => prev.some((nb) => nb.id === sid) ? prev : [...prev, { id: sid, title: fname, history: [], sourceType: "pdf", created_at: new Date().toISOString() }]);
+    setNotebooks((prev: Notebook[]) => prev.some((nb: Notebook) => nb.id === sid) ? prev : [...prev, { id: sid, title: fname, history: [], sourceType: "pdf", created_at: new Date().toISOString() }]);
     try {
       const res = await authFetch(`/synthesize/${sid}`, { method: "POST" });
       const data = await res.json();
@@ -448,7 +448,7 @@ function Dashboard() {
   }, [stopPolling, stopProgress]);
 
   const handleSelectNotebook = useCallback(async (id: string) => {
-    const nb = notebooks.find((n) => n.id === id);
+    const nb = notebooks.find((n: Notebook) => n.id === id);
     if (!nb) return;
     stopPolling(); stopProgress();
     setSessionId(id); setFilename(nb.title); setProgressValue(0);
@@ -457,7 +457,7 @@ function Dashboard() {
 
   const handleChatHistoryChange = useCallback((messages: Message[]) => {
     if (!sessionId) return;
-    setNotebooks((prev) => prev.map((nb) => nb.id === sessionId ? { ...nb, history: messages } : nb));
+    setNotebooks((prev: Notebook[]) => prev.map((nb: Notebook) => nb.id === sessionId ? { ...nb, history: messages } : nb));
   }, [sessionId]);
 
   return (
@@ -507,7 +507,7 @@ function Dashboard() {
           )}
 
           {appState === "ready" && (
-            <button onClick={() => setActivePanel((p) => p === "graph" ? "chat" : "graph")}
+            <button onClick={() => setActivePanel((p: ActivePanel) => p === "graph" ? "chat" : "graph")}
               className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-xs font-medium transition-all duration-200 md:hidden border-[#7c3aed]/40 bg-[#7c3aed]/10 text-[#a78bfa] hover:bg-[#7c3aed]/20">
               {activePanel === "graph" ? <><MessageSquare className="w-3.5 h-3.5" /> Chat</> : <><LayoutPanelLeft className="w-3.5 h-3.5" /> Graph</>}
             </button>
@@ -540,7 +540,7 @@ function Dashboard() {
                 </div>
               )}
               {appState === "ready" && (
-                <button onClick={() => setActivePanel((p) => p === "graph" ? "chat" : "graph")}
+                <button onClick={() => setActivePanel((p: ActivePanel) => p === "graph" ? "chat" : "graph")}
                   className="ml-auto hidden md:flex items-center gap-1.5 text-[11px] text-slate-500 hover:text-slate-300 transition-colors">
                   <MessageSquare className="w-3 h-3" /> Toggle view
                 </button>
@@ -617,7 +617,7 @@ function Dashboard() {
                   </div>
                   <ReactFlowProvider>
                     <KnowledgeGraph initialNodes={graphNodes} initialEdges={graphEdges} wikiPages={wikiPages}
-                      onNodeClick={(p) => { setSelectedPage(p); setSheetOpen(true); }} />
+                      onNodeClick={(p: WikiPage) => { setSelectedPage(p); setSheetOpen(true); }} />
                   </ReactFlowProvider>
                 </div>
               )}
@@ -629,14 +629,14 @@ function Dashboard() {
             style={{ flex: 1, minWidth: 0, background: "var(--acumen-bg)" }}
           >
             {/* Audio Overview Section — Padded and Separated */}
-            <div className="px-5 py-4 border-b border-white/5 bg-white/[0.02] shrink-0">
+            <div className="px-5 pt-12 pb-8 border-b border-white/5 bg-white/[0.02] shrink-0 relative z-10 mt-4">
               <PodcastPlayer sessionId={sessionId || "demo-session"} />
             </div>
 
             <ActionChat
               sessionId={sessionId}
               wikiPages={wikiPages}
-              initialMessages={notebooks.find((n) => n.id === sessionId)?.history || []}
+              initialMessages={notebooks.find((n: Notebook) => n.id === sessionId)?.history || []}
               onMessagesChange={handleChatHistoryChange}
             />
           </div>

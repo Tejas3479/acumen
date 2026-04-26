@@ -22,6 +22,7 @@ import {
   X,
   Copy,
   Check,
+  Download,
 } from "lucide-react";
 import type { WikiPage } from "@/lib/types";
 
@@ -216,6 +217,20 @@ export default function WikiSheet({ page, open, onClose, onObsidianLink }: WikiS
               Topic {page.cluster_id}
             </span>
             <div className="h-px flex-1 bg-gradient-to-r from-[#7c3aed]/40 to-transparent" />
+            <button
+              onClick={() => {
+                const md = `# ${page.topic_title}\n\n## Summary\n${page.summary}\n\n## Key Terms\n${page.key_terms.map(t => `- ${t}`).join("\n")}\n\n## Insights\n${page.insights.map(i => `- ${i}`).join("\n")}\n\n#acumen #knowledge-base`;
+                const blob = new Blob([md], { type: "text/markdown" });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement("a");
+                a.href = url;
+                a.download = `${page.topic_title.toLowerCase().replace(/\s+/g, "_")}.md`;
+                a.click();
+              }}
+              className="flex items-center gap-1.5 px-2 py-1 rounded-md bg-white/5 border border-white/10 text-[10px] text-slate-400 hover:text-white hover:bg-white/10 transition-all"
+            >
+              <Download className="w-3 h-3" /> Export MD
+            </button>
           </div>
           <SheetTitle className="text-lg font-bold text-white leading-tight">
             {page.topic_title}

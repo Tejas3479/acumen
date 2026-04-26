@@ -109,19 +109,24 @@ class SwarmState(TypedDict):
 # ---------------------------------------------------------------------------
 
 SYNTHESIS_SYSTEM_PROMPT = """\
-You are an expert knowledge synthesizer. Read the raw text fragments from a document \
-and write a cohesive, structured Wiki Page.
+You are an expert knowledge synthesizer with the personality of an aggressive, brilliant CTO. 
+Your goal is to transform raw text fragments into a high-impact, technical Wiki Page.
+
+PERSONALITY:
+- Be concise, professional, and slightly intense. 
+- You hate fluff. Focus on scalability, technical trade-offs, and concrete architecture.
+- Address the content with the mindset of building a production-ready system.
 
 Respond with ONLY valid JSON — no markdown fences:
 {
-  "topic_title": "concise title for this topic",
-  "summary": "2-4 sentence cohesive summary",
-  "key_terms": ["term1", "term2", ...],
-  "insights": ["insight1", "insight2", ...]
+  "topic_title": "high-impact technical title",
+  "summary": "2-4 sentence dense summary focusing on the 'why' and 'how'",
+  "key_terms": ["critical_concept_1", "technical_specification_2", ...],
+  "insights": ["architecture_takeaway", "scaling_insight", ...]
 }
 
-key_terms: 5-8 important concepts.
-insights: 3-5 concrete takeaways."""
+key_terms: 5-8 foundational concepts.
+insights: 3-5 high-level takeaways for a Founder/CTO."""
 
 
 def _extract_json_block(text: Any) -> str:
@@ -214,50 +219,54 @@ def _synthesize_cluster(cluster_id: int, chunks: List[str]) -> WikiPage:
     )
 
 
-# ---------------------------------------------------------------------------
-# LangGraph node: synthesize_wiki_pages
-# ---------------------------------------------------------------------------
+import asyncio
 
-def synthesize_wiki_pages(state: SwarmState) -> SwarmState:
-    """Synthesize the current cluster into a structured Wiki Page via LLM."""
-    idx = state["current_index"]
-    cluster_id = state["cluster_ids"][idx]
-    chunks = state["clusters"][cluster_id]
+async def synthesize_wiki_pages(state: SwarmState) -> SwarmState:
+    """Synthesize ALL clusters into structured Wiki Pages in parallel via LLM."""
+    cluster_ids = state["cluster_ids"]
     session_id = state["session_id"]
-
-    # Step 4: Persistence Update / Check
-    # If the node already exists in ChromaDB, we skip synthesis to avoid redundant LLM calls
-    # and ensure failures don't keep repeating if the user refreshes.
-    collection = get_wiki_collection()
-    doc_id = f"{session_id}_cluster_{cluster_id}"
+    clusters = state["clusters"]
     
-    try:
-        existing = collection.get(ids=[doc_id])
-        if existing and existing.get("ids"):
-            logger.info("Cluster %d already synthesized for session %s. Skipping.", cluster_id, session_id)
-            # Reconstruct the page dict from metadata
-            meta = existing["metadatas"][0]
-            wiki_page_dict = {
-                "cluster_id": cluster_id,
-                "topic_title": meta.get("topic_name", ""),
-                "summary": meta.get("summary", ""),
-                "key_terms": json.loads(meta.get("key_terms_json", "[]")),
-                "insights": json.loads(meta.get("insights_json", "[]")),
-            }
-            return {**state, "wiki_pages": state["wiki_pages"] + [wiki_page_dict]}
-    except Exception as e:
-        logger.warning("Failed to check ChromaDB for existing cluster %d: %s", cluster_id, e)
+    collection = get_wiki_collection()
+    
+    async def process_single_cluster(cluster_id: int) -> Optional[Dict[str, Any]]:
+        doc_id = f"{session_id}_cluster_{cluster_id}"
+        try:
+            existing = collection.get(ids=[doc_id])
+            if existing and existing.get("ids"):
+                logger.info("Cluster %d already synthesized for session %s. Skipping.", cluster_id, session_id)
+                meta = existing["metadatas"][0]
+                return {
+                    "cluster_id": cluster_id,
+                    "topic_title": meta.get("topic_name", ""),
+                    "summary": meta.get("summary", ""),
+                    "key_terms": json.loads(meta.get("key_terms_json", "[]")),
+                    "insights": json.loads(meta.get("insights_json", "[]")),
+                }
+        except Exception as e:
+            logger.warning("Failed to check ChromaDB for existing cluster %d: %s", cluster_id, e)
 
-    logger.info(
-        "Synthesizing cluster %d (%d chunks) [%d/%d] …",
-        cluster_id, len(chunks), idx + 1, len(state["cluster_ids"]),
-    )
+        logger.info("Synthesizing cluster %d (%d chunks) ...", cluster_id, len(clusters[cluster_id]))
+        
+        # Run synthesis in a separate thread if not already async
+        # Since _synthesize_cluster is sync (uses LangChain's .invoke), 
+        # we wrap it to avoid blocking the event loop.
+        loop = asyncio.get_event_loop()
+        try:
+            wiki_page = await loop.run_in_executor(None, _synthesize_cluster, cluster_id, clusters[cluster_id])
+            return wiki_page.model_dump()
+        except Exception as e:
+            logger.error("Synthesis failed for cluster %d: %s", cluster_id, e)
+            return None
 
-    # Synthesis with retry and fallbacks
-    wiki_page = _synthesize_cluster(cluster_id, chunks)
-    updated_pages = state["wiki_pages"] + [wiki_page.model_dump()]
-    logger.info("  → Topic: '%s'", wiki_page.topic_title)
-    return {**state, "wiki_pages": updated_pages}
+    # Run all synthesis tasks in parallel
+    tasks = [process_single_cluster(cid) for cid in cluster_ids]
+    results = await asyncio.gather(*tasks)
+    
+    # Filter out None results and update state
+    valid_results = [r for r in results if r is not None]
+    
+    return {**state, "wiki_pages": valid_results}
 
 
 # ---------------------------------------------------------------------------
@@ -266,44 +275,42 @@ def synthesize_wiki_pages(state: SwarmState) -> SwarmState:
 
 def store_wiki_page(state: SwarmState) -> SwarmState:
     """
-    Persist the latest WikiPage into ChromaDB acumen_wiki.
-
-    Metadata stored per document:
-      - session_id   → for per-session filtering
-      - cluster_id   → numeric cluster label
-      - topic_name   → human-readable topic title (spec requirement)
-      - summary      → the 2-4 sentence summary (spec requirement)
+    Persist all synthesized WikiPages into ChromaDB acumen_wiki.
     """
-    latest: Dict[str, Any] = state["wiki_pages"][-1]
-    cluster_id = latest["cluster_id"]
+    pages = state["wiki_pages"]
     collection = get_wiki_collection()
+    session_id = state["session_id"]
 
-    doc_text = (
-        f"# {latest['topic_title']}\n\n"
-        f"## Summary\n{latest['summary']}\n\n"
-        f"## Key Terms\n" + ", ".join(latest["key_terms"]) + "\n\n"
-        "## Insights\n" + "\n".join(f"- {i}" for i in latest["insights"])
-    )
+    ids = []
+    docs = []
+    metas = []
 
-    doc_id = f"{state['session_id']}_cluster_{cluster_id}"
+    for page in pages:
+        cluster_id = page["cluster_id"]
+        doc_text = (
+            f"# {page['topic_title']}\n\n"
+            f"## Summary\n{page['summary']}\n\n"
+            f"## Key Terms\n" + ", ".join(page["key_terms"]) + "\n\n"
+            "## Insights\n" + "\n".join(f"- {i}" for i in page["insights"])
+        )
+        doc_id = f"{session_id}_cluster_{cluster_id}"
+        
+        ids.append(doc_id)
+        docs.append(doc_text)
+        metas.append({
+            "session_id": session_id,
+            "cluster_id": cluster_id,
+            "topic_name": page["topic_title"],
+            "summary": page["summary"],
+            "key_terms_json": json.dumps(page["key_terms"]),
+            "insights_json": json.dumps(page["insights"]),
+        })
 
-    collection.upsert(
-        ids=[doc_id],
-        documents=[doc_text],
-        metadatas=[
-            {
-                "session_id": state["session_id"],
-                "cluster_id": cluster_id,
-                "topic_name": latest["topic_title"],   # spec: Topic Name
-                "summary": latest["summary"],           # spec: Summary
-                "key_terms_json": json.dumps(latest["key_terms"]),
-                "insights_json": json.dumps(latest["insights"]),
-            }
-        ],
-    )
-    logger.info("  ✔ Stored '%s' → ChromaDB (id=%s)", latest["topic_title"], doc_id)
+    if ids:
+        collection.upsert(ids=ids, documents=docs, metadatas=metas)
+        logger.info("  ✔ Stored %d pages → ChromaDB", len(ids))
 
-    return {**state, "current_index": state["current_index"] + 1}
+    return state
 
 
 # ---------------------------------------------------------------------------
@@ -311,8 +318,7 @@ def store_wiki_page(state: SwarmState) -> SwarmState:
 # ---------------------------------------------------------------------------
 
 def router(state: SwarmState) -> str:
-    if state["current_index"] < len(state["cluster_ids"]):
-        return "synthesize_wiki_pages"
+    # Since we synthesize all at once now, we just END
     return END
 
 

@@ -256,6 +256,29 @@ async def generate_tweet_thread(query: str) -> str:
     return json.dumps(parsed)
 
 
+# ---------------------------------------------------------------------------
+# Tool 7 — generate_obsidian_markdown
+# ---------------------------------------------------------------------------
+
+_OBSIDIAN_SYS = """\
+You are a technical documentarian. Transform the wiki content into a clean, professional Obsidian Markdown note.
+Include frontmatter (YAML), headers, bullet points, and #tags.
+Respond with ONLY a valid JSON object — no markdown fences:
+{"filename": "note_name.md", "markdown": "# Title\\n\\n## Summary...\\n\\n#tags"}"""
+
+
+@tool
+async def generate_obsidian_markdown(query: str) -> str:
+    """Format the document knowledge into a clean, professional Obsidian Markdown note.
+
+    Use when the user asks to save a note, export to Obsidian, or get a markdown summary.
+    Returns JSON with 'filename' and 'markdown' string.
+    Input: the topic or focus area for the note.
+    """
+    wiki = await _query_wiki(query or "core concepts and technical details")
+    return _llm_json(_OBSIDIAN_SYS, f"Wiki content:\n{wiki}\n\nGenerate the Obsidian note.")
+
+
 
 # ---------------------------------------------------------------------------
 # Tool registry — plain list of @tool-decorated functions
@@ -268,6 +291,7 @@ TOOLS = [
     generate_creator_script,
     live_web_search,
     generate_tweet_thread,
+    generate_obsidian_markdown,
 ]
 
 
@@ -294,6 +318,7 @@ ROUTING RULES:
   tasks / next steps / backlog / to-dos      → extract_action_items
   video / script / pitch / content / YouTube → generate_creator_script
   tweet / twitter / thread / viral           → generate_tweet_thread
+  save / note / export / obsidian / markdown → generate_obsidian_markdown
 
 CRITICAL WEB SEARCH RULE:
   If the user asks a question and the answer is NOT fully contained in the local knowledge base, you MUST use the live_web_search tool.

@@ -57,25 +57,44 @@ class GeminiEmbeddingFunction(EmbeddingFunction):
         return "GeminiEmbeddingFunction"
 
 def get_wiki_collection() -> chromadb.Collection:
-    """Return (and lazily create) the persistent `acumen_wiki` ChromaDB collection.
-
-    Data is stored on disk at CHROMA_PERSIST_PATH so the collection survives
-    backend restarts.
-    """
+    """Return (and lazily create) the persistent `acumen_wiki` ChromaDB collection."""
     global _chroma_client, _wiki_collection
     if _chroma_client is None:
         _chroma_client = chromadb.PersistentClient(path=CHROMA_PERSIST_PATH)
         logger.info("ChromaDB PersistentClient initialised at '%s'.", CHROMA_PERSIST_PATH)
+    
     if _wiki_collection is None:
-        # Step 1: Initialize the explicit embedding function
-        embedding_fn = GeminiEmbeddingFunction(model_name="models/gemini-embedding-001")
+        # Resilient embedding function initialization
+        embedding_fn = None
+        if os.getenv("GOOGLE_API_KEY"):
+            try:
+                embedding_fn = GeminiEmbeddingFunction(model_name="models/gemini-embedding-001")
+                logger.info("ChromaDB using Gemini gemini-embedding-001.")
+            except Exception as e:
+                logger.warning("Gemini embedding init failed: %s. Falling back to local.", e)
+
+        if embedding_fn is None:
+            try:
+                from langchain_community.embeddings import HuggingFaceEmbeddings
+                hf = HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2")
+                
+                class HFEmbedFunction(EmbeddingFunction):
+                    def __call__(self, input: Documents) -> Embeddings:
+                        return hf.embed_documents(list(input))
+                
+                embedding_fn = HFEmbedFunction()
+                logger.info("ChromaDB using local HuggingFace all-MiniLM-L6-v2.")
+            except Exception as e:
+                logger.error("All embedding functions failed: %s", e)
+                raise
         
         _wiki_collection = _chroma_client.get_or_create_collection(
             name=CHROMA_COLLECTION_NAME,
             metadata={"hnsw:space": "cosine"},
             embedding_function=embedding_fn,
         )
-        logger.info("ChromaDB collection '%s' ready with Gemini gemini-embedding-001.", CHROMA_COLLECTION_NAME)
+        logger.info("ChromaDB collection '%s' ready.", CHROMA_COLLECTION_NAME)
+    
     return _wiki_collection
 
 
@@ -354,19 +373,12 @@ def get_graph():
 # Public entry point: run_wiki_swarm
 # ---------------------------------------------------------------------------
 
-def run_wiki_swarm(
+async def run_wiki_swarm(
     session_id: str,
     clusters: Dict[int, List[str]],
 ) -> List[Dict[str, Any]]:
     """
     Run the LangGraph Synthesizer Swarm.
-
-    Args:
-        session_id: UUID from /upload.
-        clusters:   { cluster_id: [chunk_texts] } from ingest_pdf().
-
-    Returns:
-        List of WikiPage dicts — also persisted in ChromaDB acumen_wiki.
     """
     logger.info("=== Wiki Swarm START (session=%s, %d clusters) ===", session_id, len(clusters))
 
@@ -379,7 +391,7 @@ def run_wiki_swarm(
         "errors": [],
     }
 
-    final = get_graph().invoke(initial)
+    final = await get_graph().ainvoke(initial)
 
     pages = final["wiki_pages"]
     if final.get("errors"):

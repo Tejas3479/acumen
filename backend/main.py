@@ -32,6 +32,16 @@ from pydantic import BaseModel
 # Load .env (GOOGLE_API_KEY etc.) before any engine imports
 load_dotenv()
 
+# ---------------------------------------------------------------------------
+# Persistent storage paths — configured BEFORE engine imports
+# ---------------------------------------------------------------------------
+DATA_DIR: str = os.getenv("ACUMEN_DATA_DIR", "./data")
+# Ensure the data directory exists immediately
+os.makedirs(DATA_DIR, exist_ok=True)
+
+# Propagate the ChromaDB path so wiki_swarm picks it up at import time
+os.environ.setdefault("ACUMEN_CHROMA_PATH", os.path.join(DATA_DIR, "chroma_db"))
+
 from engine.ingest import ingest_pdf, ingest_url                  # noqa: E402
 from engine.wiki_swarm import run_wiki_swarm, build_reactflow_data  # noqa: E402
 from engine.action_agent import run_agent_chat                  # noqa: E402
@@ -185,11 +195,8 @@ class NotebooksResponse(BaseModel):
 # Persistent storage paths — /var/data is Render's mounted disk
 # ---------------------------------------------------------------------------
 
-DATA_DIR: str = os.getenv("ACUMEN_DATA_DIR", "./data")
+# Persistent storage paths already configured at top of file
 DB_PATH: str = os.path.join(DATA_DIR, "acumen.db")
-
-# Propagate the ChromaDB path so wiki_swarm picks it up at import time
-os.environ.setdefault("ACUMEN_CHROMA_PATH", os.path.join(DATA_DIR, "chroma_db"))
 
 
 # ---------------------------------------------------------------------------
@@ -461,7 +468,7 @@ def get_session(session_id: str) -> Dict[int, List[str]]:
         raise KeyError(f"Session '{session_id}' exists but is corrupted.") from exc
 
 
-def _run_full_ingestion_background(session_id: str, title: str, pdf_bytes: bytes, clerk_id: str) -> None:
+async def _run_full_ingestion_background(session_id: str, title: str, pdf_bytes: bytes, clerk_id: str) -> None:
     """Worker for full async PDF ingestion pipeline (handles new and append)."""
     try:
         # Check if we are appending
@@ -495,14 +502,14 @@ def _run_full_ingestion_background(session_id: str, title: str, pdf_bytes: bytes
             swarm_clusters = new_clusters
 
         db.update_status(session_id, "synthesizing")
-        run_wiki_swarm(session_id=session_id, clusters=swarm_clusters)
+        await run_wiki_swarm(session_id=session_id, clusters=swarm_clusters)
         db.update_status(session_id, "completed")
     except Exception as exc:
         logger.exception("[BG] Ingestion failed for session %s: %s", session_id, exc)
         db.update_status(session_id, "error")
 
 
-def _run_url_ingestion_background(session_id: str, url: str, clerk_id: str) -> None:
+async def _run_url_ingestion_background(session_id: str, url: str, clerk_id: str) -> None:
     """Worker for full async URL ingestion pipeline (handles new and append)."""
     try:
         # Check if we are appending
@@ -535,18 +542,18 @@ def _run_url_ingestion_background(session_id: str, url: str, clerk_id: str) -> N
             swarm_clusters = new_clusters
 
         db.update_status(session_id, "synthesizing")
-        run_wiki_swarm(session_id=session_id, clusters=swarm_clusters)
+        await run_wiki_swarm(session_id=session_id, clusters=swarm_clusters)
         db.update_status(session_id, "completed")
     except Exception as exc:
         logger.exception("[BG] URL ingestion failed for session %s: %s", session_id, exc)
         db.update_status(session_id, "error")
 
 
-def _run_swarm_background(session_id: str, clusters: Dict[int, List[str]]) -> None:
+async def _run_swarm_background(session_id: str, clusters: Dict[int, List[str]]) -> None:
     """Worker executed by BackgroundTasks — runs the LangGraph swarm and updates SQLite."""
     try:
         logger.info("[BG] Wiki swarm starting for session %s …", session_id)
-        run_wiki_swarm(session_id=session_id, clusters=clusters)
+        await run_wiki_swarm(session_id=session_id, clusters=clusters)
         db.update_status(session_id, "completed")
         logger.info("[BG] Wiki swarm completed for session %s.", session_id)
     except Exception as exc:

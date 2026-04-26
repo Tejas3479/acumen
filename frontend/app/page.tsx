@@ -252,6 +252,7 @@ function Dashboard() {
   const { getToken } = useAuth();
   const { isSignedIn } = useUser();
 
+  const [view, setView] = useState<"workspace" | "library">("workspace");
   const [appState, setAppState] = useState<AppState>("idle");
   const [notebooks, setNotebooks] = useState<Notebook[]>([]);
   const hasLoadedInitialRef = useRef(false);
@@ -504,7 +505,14 @@ function Dashboard() {
 
   return (
     <div className="flex h-screen overflow-hidden bg-[#0a0a0f]">
-      <Sidebar notebooks={notebooks} activeNotebookId={sessionId} onSelectNotebook={handleSelectNotebook} onNewNotebook={handleNewNotebook} />
+      <Sidebar 
+        notebooks={notebooks} 
+        activeNotebookId={sessionId} 
+        onSelectNotebook={handleSelectNotebook} 
+        onNewNotebook={handleNewNotebook} 
+        activeView={view}
+        onViewChange={setView}
+      />
 
       <main className="flex flex-col flex-1 min-w-0 overflow-hidden relative" style={{ background: "var(--acumen-bg)" }}>
         {/* Top Nav */}
@@ -572,13 +580,13 @@ function Dashboard() {
 
         {/* Main Content Area */}
         <div className="flex flex-1 overflow-hidden">
-          {appState === "idle" ? (
-            /* FULL WIDTH DASHBOARD */
+          {view === "library" ? (
+            /* FULL WIDTH LIBRARY/HISTORY VIEW */
             <div className="flex-1 overflow-y-auto custom-scrollbar bg-[var(--acumen-bg)]">
               <div className="max-w-6xl mx-auto flex flex-col px-8 py-12 gap-12 animate-in fade-in slide-in-from-bottom-4 duration-1000">
                 <div className="flex flex-col gap-2">
-                  <h2 className="text-4xl font-bold text-white tracking-tight">Welcome to your Workspace</h2>
-                  <p className="text-slate-400 text-lg">Your executable knowledge base is ready. Select a notebook or upload a new source.</p>
+                  <h2 className="text-4xl font-bold text-white tracking-tight">Knowledge Vault History</h2>
+                  <p className="text-slate-400 text-lg">Browse and manage your previously synthesized intelligence assets.</p>
                 </div>
 
                 <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
@@ -633,10 +641,10 @@ function Dashboard() {
                   </div>
                   {notebooks.length > 0 ? (
                     <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                      {notebooks.slice(0, 9).map((nb) => (
+                      {notebooks.map((nb) => (
                         <button 
                           key={nb.id}
-                          onClick={() => handleSelectNotebook(nb.id)}
+                          onClick={() => { setView("workspace"); handleSelectNotebook(nb.id); }}
                           className="flex flex-col items-start p-6 rounded-3xl bg-white/[0.015] border border-white/5 hover:border-[#7c3aed]/40 hover:bg-white/[0.04] transition-all text-left group hover:translate-y-[-4px] duration-300 shadow-xl"
                         >
                           <div className="flex items-center gap-4 mb-4 w-full">
@@ -696,6 +704,26 @@ function Dashboard() {
             </div>
 
             <div className="flex-1 relative overflow-hidden">
+              {/* Idle State (Workspace Mode) */}
+              {appState === "idle" && (
+                <div className="absolute inset-0 flex flex-col items-center justify-center p-12 text-center gap-10">
+                   <div className="flex flex-col gap-4 max-w-md animate-in fade-in slide-in-from-bottom-2 duration-700">
+                      <h2 className="text-3xl font-bold text-white tracking-tight">Welcome back</h2>
+                      <p className="text-slate-400 text-sm leading-relaxed">
+                        Your executable knowledge base is ready. What are we studying today? Upload a PDF or paste a URL to initialize a new Knowledge Graph.
+                      </p>
+                   </div>
+                   
+                   <div className="w-full max-w-md p-8 rounded-3xl bg-white/[0.03] border border-white/10 backdrop-filter blur-xl hover:bg-white/[0.05] transition-all group relative overflow-hidden">
+                      <div className="relative z-10 space-y-6">
+                        <div className="w-12 h-12 rounded-2xl bg-[#7c3aed]/20 border border-[#7c3aed]/30 flex items-center justify-center mx-auto">
+                          <Plus className="w-6 h-6 text-[#a78bfa]" />
+                        </div>
+                        <IngestionEngine mode="hero" onUploadComplete={handleUploadComplete} onStartSynthesis={handleStartSynthesis} />
+                      </div>
+                    </div>
+                </div>
+              )}
               {/* Synthesizing overlay */}
               {appState === "synthesizing" && (
                 <div className="absolute inset-0 z-20 flex flex-col items-center justify-center gap-8 px-10"

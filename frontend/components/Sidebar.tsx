@@ -1,7 +1,7 @@
 "use client";
 
 import { Notebook } from "@/lib/types";
-import { Plus, BookText, Menu } from "lucide-react";
+import { Plus, BookText, Menu, LayoutDashboard, Library } from "lucide-react";
 import { Sheet, SheetContent, SheetTrigger, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { useState } from "react";
 
@@ -10,6 +10,8 @@ interface SidebarProps {
   activeNotebookId: string | null;
   onSelectNotebook: (id: string) => void;
   onNewNotebook: () => void;
+  activeView: "workspace" | "library";
+  onViewChange: (view: "workspace" | "library") => void;
 }
 
 export default function Sidebar({
@@ -17,21 +19,43 @@ export default function Sidebar({
   activeNotebookId,
   onSelectNotebook,
   onNewNotebook,
+  activeView,
+  onViewChange
 }: SidebarProps) {
   const [mobileOpen, setMobileOpen] = useState(false);
 
   const handleSelect = (id: string) => {
+    onViewChange("workspace");
     onSelectNotebook(id);
     setMobileOpen(false);
   };
 
   const handleNew = () => {
+    onViewChange("workspace");
     onNewNotebook();
     setMobileOpen(false);
   };
 
   const renderContent = () => (
     <div className="flex flex-col h-full bg-[#0a0a0b]/40 backdrop-blur-xl border-r border-white/5 w-64 md:w-full">
+      {/* Navigation Tabs */}
+      <div className="p-3 border-b border-white/5 flex flex-col gap-1">
+        <button
+          onClick={() => { onViewChange("workspace"); setMobileOpen(false); }}
+          className={`flex items-center gap-3 px-4 py-2.5 rounded-xl transition-all text-xs font-bold tracking-wide ${activeView === "workspace" ? "bg-white/10 text-white" : "text-slate-500 hover:text-slate-300 hover:bg-white/5"}`}
+        >
+          <LayoutDashboard className="w-4 h-4" />
+          Workspace
+        </button>
+        <button
+          onClick={() => { onViewChange("library"); setMobileOpen(false); }}
+          className={`flex items-center gap-3 px-4 py-2.5 rounded-xl transition-all text-xs font-bold tracking-wide ${activeView === "library" ? "bg-white/10 text-white" : "text-slate-500 hover:text-slate-300 hover:bg-white/5"}`}
+        >
+          <Library className="w-4 h-4" />
+          Vault History
+        </button>
+      </div>
+
       <div className="p-5 border-b border-white/5">
         <button
           onClick={handleNew}

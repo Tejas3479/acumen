@@ -6,7 +6,8 @@ import { toast } from "sonner";
 import {
   Brain, GitBranch, RefreshCw, LayoutPanelLeft,
   MessageSquare, Loader2, Sparkles, AlertTriangle,
-  Zap, Network, BookOpen, ArrowRight, Headphones, Search, Layers
+  Zap, Network, BookOpen, ArrowRight, Headphones, Search, Layers,
+  Plus, History as HistoryIcon, Library
 } from "lucide-react";
 import { motion } from "framer-motion";
 import { Progress } from "@/components/ui/progress";
@@ -486,13 +487,18 @@ function Dashboard() {
       <main className="flex flex-col flex-1 min-w-0 overflow-hidden relative" style={{ background: "var(--acumen-bg)" }}>
         {/* Top Nav */}
         <header className="flex items-center gap-3 px-4 md:px-6 py-3 border-b border-white/8 shrink-0" style={{ background: "rgba(14,14,20,0.85)", backdropFilter: "blur(12px)" }}>
-          <div className="flex items-center gap-2.5 shrink-0 md:ml-0 ml-10">
-            <div className="w-8 h-8 rounded-xl bg-[#7c3aed]/20 border border-[#7c3aed]/40 flex items-center justify-center glow-purple-sm">
-              <Brain className="w-4 h-4 text-[#a78bfa]" />
+          <button 
+            onClick={handleNewNotebook}
+            className="flex items-center gap-2.5 shrink-0 md:ml-0 ml-10 group transition-all active:scale-95"
+          >
+            <div className="w-8 h-8 rounded-xl bg-[#7c3aed]/20 border border-[#7c3aed]/40 flex items-center justify-center glow-purple-sm group-hover:bg-[#7c3aed]/30 group-hover:border-[#7c3aed]/60 transition-all">
+              <Brain className="w-4 h-4 text-[#a78bfa] group-hover:scale-110 transition-transform" />
             </div>
-            <span className="text-base font-bold gradient-text tracking-tight">Acumen</span>
-            <span className="text-[10px] text-slate-600 font-mono mt-0.5 hidden lg:block">/ executable knowledge base</span>
-          </div>
+            <div className="flex flex-col items-start leading-none">
+              <span className="text-base font-bold gradient-text tracking-tight">Acumen</span>
+              <span className="text-[10px] text-slate-600 font-mono hidden lg:block">/ workspace dashboard</span>
+            </div>
+          </button>
 
           {filename && (
             <div className="ml-2 hidden sm:flex items-center gap-2">
@@ -607,18 +613,87 @@ function Dashboard() {
                 </div>
               )}
 
-              {/* Idle — Hero Ingestion */}
+              {/* Idle state (The Dashboard Overview) */}
               {appState === "idle" && (
-                <div className="flex flex-col items-center justify-center h-full p-8">
-                  <IngestionEngine 
-                    mode="hero" 
-                    onUploadComplete={handleUploadComplete} 
-                    onStartSynthesis={handleStartSynthesis}
-                  />
-                  <div className="flex flex-wrap gap-2 justify-center pt-8">
-                    {["KMeans Clustering","LangGraph Synthesis","5-Tool Agent","ReactFlow Graph"].map((f) => (
-                      <span key={f} className="text-[11px] px-2.5 py-1 rounded-full bg-white/5 border border-white/8 text-slate-500">{f}</span>
-                    ))}
+                <div className="flex flex-col h-full px-8 py-10 overflow-y-auto custom-scrollbar gap-10 animate-in fade-in slide-in-from-bottom-4 duration-700">
+                  <div className="flex flex-col gap-2">
+                    <h2 className="text-3xl font-bold text-white tracking-tight">Welcome back</h2>
+                    <p className="text-slate-400">Your executable knowledge base is ready. What are we studying today?</p>
+                  </div>
+
+                  <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                    {/* Upload Card */}
+                    <div className="p-8 rounded-3xl bg-white/[0.03] border border-white/10 backdrop-filter blur-xl hover:bg-white/[0.05] transition-all group relative overflow-hidden">
+                      <div className="absolute top-0 right-0 p-8 opacity-5 group-hover:opacity-10 transition-opacity">
+                        <Plus className="w-32 h-32 text-white" />
+                      </div>
+                      <div className="relative z-10 space-y-6">
+                        <div className="w-12 h-12 rounded-2xl bg-[#7c3aed]/20 border border-[#7c3aed]/30 flex items-center justify-center">
+                          <Plus className="w-6 h-6 text-[#a78bfa]" />
+                        </div>
+                        <div>
+                          <h3 className="text-xl font-bold text-white mb-2">New Notebook</h3>
+                          <p className="text-sm text-slate-400">Upload a PDF or paste a URL to create a fresh Knowledge Graph.</p>
+                        </div>
+                        <IngestionEngine mode="hero" onUploadComplete={handleUploadComplete} onStartSynthesis={handleStartSynthesis} />
+                      </div>
+                    </div>
+
+                    {/* Quick Stats Card */}
+                    <div className="p-8 rounded-3xl bg-[#7c3aed]/5 border border-[#7c3aed]/20 backdrop-filter blur-xl relative overflow-hidden">
+                       <div className="flex flex-col h-full justify-between gap-8">
+                         <div className="space-y-1">
+                            <h3 className="text-xl font-bold text-white">Workspace Health</h3>
+                            <p className="text-sm text-slate-400">Activity summary for your library.</p>
+                         </div>
+                         <div className="grid grid-cols-2 gap-4">
+                            <div className="p-4 rounded-2xl bg-black/40 border border-white/5">
+                               <span className="text-[10px] uppercase tracking-widest text-slate-500 font-bold">Total Notebooks</span>
+                               <div className="text-2xl font-bold text-white mt-1">{notebooks.length}</div>
+                            </div>
+                            <div className="p-4 rounded-2xl bg-black/40 border border-white/5">
+                               <span className="text-[10px] uppercase tracking-widest text-slate-500 font-bold">Active Sessions</span>
+                               <div className="text-2xl font-bold text-[#10b981] mt-1">{notebooks.filter(n => n.status === "completed").length}</div>
+                            </div>
+                         </div>
+                         <div className="flex items-center gap-2 text-xs text-[#a78bfa] bg-[#7c3aed]/10 px-3 py-2 rounded-xl w-fit">
+                            <Zap className="w-3.5 h-3.5" />
+                            <span>Gemini 2.5 Flash active</span>
+                         </div>
+                       </div>
+                    </div>
+                  </div>
+
+                  {/* Recent Activity List */}
+                  <div className="space-y-4 pb-10">
+                      <h3 className="text-sm font-bold text-slate-400 uppercase tracking-widest flex items-center gap-2">
+                        <HistoryIcon className="w-4 h-4" /> Recent Activity
+                      </h3>
+                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                      {notebooks.slice(0, 6).map((nb) => (
+                        <button 
+                          key={nb.id}
+                          onClick={() => handleSelectNotebook(nb.id)}
+                          className="flex flex-col items-start p-4 rounded-2xl bg-white/[0.02] border border-white/5 hover:border-[#7c3aed]/40 hover:bg-white/[0.04] transition-all text-left group"
+                        >
+                          <div className="flex items-center gap-3 mb-3 w-full">
+                            <div className="p-2 rounded-lg bg-white/5 border border-white/10 group-hover:bg-[#7c3aed]/10 transition-colors">
+                              {nb.sourceType === "url" ? <GitBranch className="w-3.5 h-3.5 text-blue-400" /> : <Library className="w-3.5 h-3.5 text-[#a78bfa]" />}
+                            </div>
+                            <div className="flex-1 truncate">
+                              <div className="text-sm font-bold text-white truncate">{nb.title}</div>
+                              <div className="text-[10px] text-slate-500">{new Date(nb.created_at || "").toLocaleDateString()}</div>
+                            </div>
+                          </div>
+                          <div className="flex items-center gap-1.5 text-[10px] text-slate-400">
+                             <MessageSquare className="w-3 h-3" />
+                             <span>{nb.history?.length || 0} messages</span>
+                             <span className="mx-1">•</span>
+                             <span className={nb.status === "completed" ? "text-[#10b981]" : "text-amber-500"}>{nb.status}</span>
+                          </div>
+                        </button>
+                      ))}
+                    </div>
                   </div>
                 </div>
               )}

@@ -77,7 +77,7 @@ function LandingPage() {
   return (
     <div className="min-h-screen bg-[#0a0a0b] text-[#e1e1e3] selection:bg-indigo-500/30 overflow-x-hidden relative">
       {/* SVG Grid Background */}
-      <div className="absolute inset-0 bg-[url('/grid.svg')] bg-center [mask-image:linear-gradient(180deg,white,rgba(255,255,255,0))] pointer-events-none opacity-40" />
+      <div className="absolute inset-0 bg-[url('/grid.svg')] bg-center pointer-events-none opacity-20" />
 
       {/* Nav */}
       <nav className="flex items-center justify-between px-8 md:px-16 py-8 relative z-10">
@@ -583,7 +583,7 @@ function Dashboard() {
 
                 <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
                   {/* Upload Card */}
-                  <div className="p-10 rounded-[2.5rem] bg-white/[0.03] border border-white/10 backdrop-filter blur-2xl hover:bg-white/[0.05] transition-all group relative overflow-hidden">
+                  <div className="p-10 rounded-[2.5rem] bg-white/[0.03] border border-white/10 backdrop-blur-2xl hover:bg-white/[0.05] transition-all group relative overflow-hidden">
                     <div className="absolute top-0 right-0 p-10 opacity-5 group-hover:opacity-10 transition-opacity">
                       <Plus className="w-40 h-40 text-white" />
                     </div>
@@ -600,7 +600,7 @@ function Dashboard() {
                   </div>
 
                   {/* Quick Stats Card */}
-                  <div className="p-10 rounded-[2.5rem] bg-[#7c3aed]/5 border border-[#7c3aed]/20 backdrop-filter blur-2xl relative overflow-hidden">
+                  <div className="p-10 rounded-[2.5rem] bg-[#7c3aed]/5 border border-[#7c3aed]/20 backdrop-blur-2xl relative overflow-hidden">
                      <div className="flex flex-col h-full justify-between gap-10">
                        <div className="space-y-2">
                           <h3 className="text-2xl font-bold text-white">Library Insights</h3>
@@ -699,7 +699,7 @@ function Dashboard() {
               {/* Synthesizing overlay */}
               {appState === "synthesizing" && (
                 <div className="absolute inset-0 z-20 flex flex-col items-center justify-center gap-8 px-10"
-                  style={{ background: "radial-gradient(ellipse at center, rgba(124,58,237,0.08) 0%, rgba(10,10,15,0.97) 70%)" }}>
+                  style={{ background: "rgba(10,10,15,0.4)", backdropFilter: "blur(8px)" }}>
                   <div className="flex flex-col items-center gap-3">
                     <div className="w-16 h-16 rounded-2xl flex items-center justify-center"
                       style={{ background: "linear-gradient(135deg,rgba(124,58,237,0.25),rgba(167,139,250,0.1))", border: "1px solid rgba(124,58,237,0.4)", boxShadow: "0 0 40px rgba(124,58,237,0.2)" }}>

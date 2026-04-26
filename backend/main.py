@@ -174,6 +174,7 @@ class NotebookSummary(BaseModel):
     status: str
     created_at: str
     source_type: str = "pdf"
+    history: List[HistoryItem] = []
 
 
 class NotebooksResponse(BaseModel):
@@ -260,6 +261,11 @@ class Database:
                     "ALTER TABLE notebooks ADD COLUMN source_type TEXT NOT NULL DEFAULT 'pdf'"
                 )
                 logger.info("Migration: added 'source_type' column to notebooks.")
+            if "history_json" not in existing_cols:
+                conn.execute(
+                    "ALTER TABLE notebooks ADD COLUMN history_json TEXT NOT NULL DEFAULT '[]'"
+                )
+                logger.info("Migration: added 'history_json' column to notebooks.")
             conn.commit()
         logger.info("SQLite database ready at '%s'.", self.path)
 
@@ -302,19 +308,28 @@ class Database:
             )
             conn.commit()
 
+    def update_history(self, session_id: str, history: List[Dict[str, Any]]) -> None:
+        """Update the chat history for a notebook."""
+        history_json = json.dumps(history)
+        with self._connect() as conn:
+            conn.execute(
+                "UPDATE notebooks SET history_json = ? WHERE session_id = ?",
+                (history_json, session_id),
+            )
+            conn.commit()
+
     def get_notebook(self, session_id: str) -> Optional[sqlite3.Row]:
-        """Return the notebook row or None if not found."""
+        """Fetch a single notebook row by session_id."""
         with self._connect() as conn:
             return conn.execute(
-                "SELECT * FROM notebooks WHERE session_id = ?",
-                (session_id,),
+                "SELECT * FROM notebooks WHERE session_id = ?", (session_id,)
             ).fetchone()
 
     def get_notebooks_for_user(self, clerk_id: str) -> List[sqlite3.Row]:
-        """Return all notebook rows belonging to a specific Clerk user."""
+        """Fetch all notebooks for a given clerk_id, newest first."""
         with self._connect() as conn:
             return conn.execute(
-                "SELECT * FROM notebooks WHERE clerk_id = ? ORDER BY rowid DESC",
+                "SELECT * FROM notebooks WHERE clerk_id = ? ORDER BY created_at DESC",
                 (clerk_id,),
             ).fetchall()
 
@@ -782,8 +797,28 @@ async def get_notebooks(user: ClerkUser = Depends(get_current_user)) -> Notebook
             title=r["title"],
             status=r["status"],
             created_at=r["created_at"],
-            source_type=r["source_type"] if "source_type" in r.keys() else "pdf"
+            source_type=r["source_type"] if "source_type" in r.keys() else "pdf",
+            history=json.loads(r["history_json"]) if "history_json" in r.keys() and r["history_json"] else []
         )
         for r in rows
     ]
     return NotebooksResponse(notebooks=notebooks)
+
+
+@app.post("/api/notebooks/{session_id}/history", tags=["user"])
+async def update_notebook_history(
+    session_id: str,
+    history: List[HistoryItem],
+    user: ClerkUser = Depends(get_current_user)
+):
+    """
+    Update the chat history for a specific notebook.
+    """
+    row = db.get_notebook(session_id)
+    if not row:
+        raise HTTPException(status_code=404, detail="Notebook not found")
+    if row["clerk_id"] and row["clerk_id"] != user.clerk_id:
+        raise HTTPException(status_code=403, detail="Forbidden")
+    
+    db.update_history(session_id, [h.model_dump() for h in history])
+    return {"status": "success"}

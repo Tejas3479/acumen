@@ -82,6 +82,7 @@ export interface Notebook {
   history: Message[];
   created_at?: string;
   sourceType?: "pdf" | "url";
+  status?: "processing" | "completed" | "error" | "synthesizing" | "ingesting";
 }
 
 export interface ChatRequest {

@@ -283,45 +283,6 @@ function Dashboard() {
     });
   }, [getToken]);
 
-  // 1. Initial Load: Merge Backend + LocalStorage
-  useEffect(() => {
-    const loadData = async () => {
-      let merged: Notebook[] = [];
-      
-      // Load from localStorage first (for speed/offline)
-      try {
-        const stored = localStorage.getItem(STORAGE_KEY);
-        if (stored) merged = JSON.parse(stored);
-      } catch {}
-
-      // Fetch from backend to sync
-      try {
-        const token = await getToken();
-        if (token) {
-          const res = await authFetch("/api/notebooks");
-          if (res.ok) {
-            const data = await res.json();
-            const backendNotebooks: Notebook[] = data.notebooks.map((n: any) => ({
-              id: n.id,
-              title: n.title,
-              status: n.status,
-              created_at: n.created_at,
-              history: merged.find(m => m.id === n.id)?.history || [], // Keep local history if exists
-            }));
-            
-            // Merge: Backend is source of truth for IDs, but we keep local history
-            merged = backendNotebooks;
-          }
-        }
-      } catch (err) {
-        console.error("Failed to sync with backend:", err);
-      }
-
-      setNotebooks(merged);
-    };
-
-    if (isSignedIn) loadData();
-  }, [isSignedIn, getToken, authFetch]);
 
   // 2. Persist to localStorage whenever notebooks change
   useEffect(() => {
@@ -455,10 +416,68 @@ function Dashboard() {
     await loadGraphForSession(id);
   }, [notebooks, stopPolling, stopProgress, loadGraphForSession]);
 
-  const handleChatHistoryChange = useCallback((messages: Message[]) => {
+  const handleChatHistoryChange = useCallback(async (messages: Message[]) => {
     if (!sessionId) return;
-    setNotebooks((prev: Notebook[]) => prev.map((nb: Notebook) => nb.id === sessionId ? { ...nb, history: messages } : nb));
-  }, [sessionId]);
+    
+    // 1. Update local state immediately
+    setNotebooks((prev: Notebook[]) => prev.map((nb: Notebook) => 
+      nb.id === sessionId ? { ...nb, history: messages } : nb
+    ));
+
+    // 2. Persist to backend (fire and forget)
+    try {
+      authFetch(`/api/notebooks/${sessionId}/history`, {
+        method: "POST",
+        body: JSON.stringify(messages),
+        headers: { "Content-Type": "application/json" }
+      });
+    } catch (e) {
+      console.warn("Failed to persist history to backend:", e);
+    }
+  }, [sessionId, authFetch]);
+
+  // ── Initial Load Effect (Moved here to avoid use-before-declaration) ──
+  useEffect(() => {
+    const loadData = async () => {
+      try {
+        const token = await getToken();
+        if (!token) return;
+
+        const res = await authFetch("/api/notebooks");
+        if (res.ok) {
+          const data = await res.json();
+          const backendNotebooks: Notebook[] = data.notebooks.map((n: any) => ({
+            id: n.id,
+            title: n.title,
+            status: n.status,
+            created_at: n.created_at,
+            sourceType: n.source_type,
+            history: n.history || [],
+          }));
+          
+          setNotebooks(backendNotebooks);
+
+          // AUTO-LOAD: If we have notebooks and no active session, load the first one
+          if (backendNotebooks.length > 0 && !sessionId) {
+            const latest = backendNotebooks[0];
+            setSessionId(latest.id);
+            setFilename(latest.title);
+            if (latest.status === "completed") {
+              loadGraphForSession(latest.id);
+            } else if (latest.status === "processing" || latest.status === "synthesizing") {
+              setAppState("synthesizing");
+              startProgress();
+              startPolling(latest.id);
+            }
+          }
+        }
+      } catch (err) {
+        console.error("Failed to sync with backend:", err);
+      }
+    };
+
+    if (isSignedIn) loadData();
+  }, [isSignedIn, getToken, authFetch, sessionId, loadGraphForSession, startPolling, startProgress]);
 
   return (
     <div className="flex h-screen overflow-hidden bg-[#0a0a0f]">

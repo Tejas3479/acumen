@@ -19,6 +19,12 @@ Acumen is an AI-powered "NotebookLM++" platform built for founders, developers, 
   - **Live Web Search**: Real-time augmentation via DuckDuckGo.
 - **📊 Knowledge Graph**: Interactive ReactFlow visualization of conceptual relationships.
 
+## 📖 Core Documentation
+
+For in-depth explanations of system design, machine learning pipelines, and security controls, refer to:
+- **🏛️ [System Architecture & ML Flow](ARCHITECTURE.md)**: K-Means clustering, unit $L_2$ normalization, LangGraph Synthesizer Swarms, and 2-stage RAG reranking maps.
+- **🛡️ [Security & Hardening Policy](SECURITY.md)**: OWASP Top 10 mitigations, dynamic AES Fernet key encryption at rest, loopback SSRF blocklists, and prompt injection filters.
+
 ## 🛠️ Tech Stack
 
 - **Frontend**: Next.js 15 (App Router), React 19, Framer Motion, ReactFlow, Lucide, TailwindCSS 4.0.

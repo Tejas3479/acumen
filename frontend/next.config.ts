@@ -10,7 +10,7 @@ const nextConfig: NextConfig = {
   },
   // Anchor file tracing to this project root to suppress spurious
   // "multiple lockfiles detected" warnings from a user-level package-lock.json
-  outputFileTracingRoot: path.join(__dirname, "../../"),
+  outputFileTracingRoot: path.join(__dirname, "../"),
   async headers() {
     return [
       {

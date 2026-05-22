@@ -23,9 +23,16 @@ Acumen is an AI-powered "NotebookLM++" platform built for founders, developers, 
 
 - **Frontend**: Next.js 15 (App Router), React 19, Framer Motion, ReactFlow, Lucide, TailwindCSS 4.0.
 - **Backend**: FastAPI (Python 3.11), LangChain, LangGraph, ChromaDB, Scikit-Learn.
-- **AI Models**: Gemini 1.5 Flash (Synthesizer & Agent), Hugging Face TTS (Audio).
+- **AI Models**: Gemini 2.5 Flash (Core Agent, Swarm & Cross-Encoder Reranker), Gemini `gemini-embedding-001` (Embeddings), Hugging Face TTS (Audio).
 - **Auth**: Clerk (Enterprise-grade JWT verification).
-- **Deployment**: Render (Backend + Persistence), Vercel (Frontend).
+- **Security (OWASP Top 10 Hardened)**:
+  - **A02:2021**: API Key Encryption at Rest (via symmetric `cryptography.fernet`).
+  - **LLM01 / Injection Defense**: High-accuracy prompt injection shield & input sanitization.
+  - **SSRF Shield**: RFC-1918 private IP range checks blocking local network traversal for URL ingestion.
+  - **HTTPS Redirection**: Automated middleware enforcing secure SSL redirection in production.
+  - **Audit Logging**: JSONL rotating event logger for all security-critical operations.
+  - **Strict CSP**: Production Content Security Policy and security headers in frontend configuration.
+- **Deployment**: Render (Backend + Persistent Disk Mount), Vercel (Frontend).
 
 ## 🧑‍💻 Aggressive CTO Persona
 
@@ -36,8 +43,25 @@ Acumen is designed with a specific personality. It’s concise, brilliant, and s
 ### Prerequisites
 - Python 3.11+
 - Node.js 20+
-- Google Gemini API Key
-- Clerk Secret Keys
+
+### Environment Variables (`backend/.env`)
+Create a `.env` file in the `backend/` directory:
+```bash
+GOOGLE_API_KEY=your_gemini_api_key
+CLERK_SECRET_KEY=your_clerk_secret_key
+CLERK_JWT_KEY=your_clerk_pem_public_key
+ENCRYPTION_KEY=32_byte_symmetric_key_or_auto_generated
+ENVIRONMENT=production # triggers strict HTTPS and security policies
+ACUMEN_DATA_DIR=./data # SQLite database directory path
+```
+
+### Environment Variables (`frontend/.env.local`)
+Create a `.env.local` file in the `frontend/` directory:
+```bash
+NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=your_clerk_publishable_key
+CLERK_SECRET_KEY=your_clerk_secret_key
+NEXT_PUBLIC_API_URL=http://localhost:8000
+```
 
 ### Installation
 
@@ -62,7 +86,8 @@ Acumen is designed with a specific personality. It’s concise, brilliant, and s
    ```
 
 ## 🏆 Hackathon Judges Note
-Acumen solves the "Information Overload" problem by providing a structured, interactive, and executable interface for knowledge. The 2-stage RAG (Vector Search + LLM Reranking) ensures that the Action Agent is significantly more accurate than standard chatbot implementations.
+Acumen solves the "Information Overload" problem by providing a structured, interactive, and executable interface for knowledge. The 2-stage RAG (Vector Search + Gemini 2.5 Flash Cross-Encoder Reranking) ensures that the Action Agent is significantly more accurate than standard chatbot implementations, while remaining incredibly fast and optimized for free-tier deployments.
 
 ---
 Built with 💜 by the Acumen Team.
+

@@ -1,18 +1,21 @@
 # Acumen Agent Architecture (LangGraph & ML)
 
 ## 1. The Ingestion & Clustering Engine (`ingest.py`)
-* **Action:** Receives PDF, extracts text, chunks via `RecursiveCharacterTextSplitter`.
-* **ML Integration:** Embeds chunks, then runs `sklearn.cluster.KMeans` (n_clusters=5) to mathematically group the chunks into topical clusters.
+* **Action:** Receives documents in multiple formats (PDF, DOCX, TXT, MD, HTML) or direct Website URLs. Extracts plain text, and chunks via `RecursiveCharacterTextSplitter`.
+* **ML Integration:** Embeds chunks using Gemini `models/gemini-embedding-001`. Runs `sklearn.cluster.KMeans` (n_clusters=5) to mathematically group the chunks into topical clusters.
 * **Output:** A dictionary mapping Cluster IDs to their respective text chunks.
 
 ## 2. The Synthesizer Swarm (`wiki_swarm.py`)
 * **Action:** A LangGraph state graph that iterates through the ML clusters.
 * **Prompt:** "Act as an expert synthesizer. Read these grouped text fragments and write a cohesive, structured Wiki Page (Summary, Key Terms, Insights)."
-* **Storage:** Saves these structured Wiki Pages into an in-memory ChromaDB collection (`acumen_wiki`). Metadata must include the generated "Topic Title".
+* **Storage:** Saves these structured Wiki Pages into an in-memory ChromaDB collection (`acumen_wiki`). Metadata includes the generated "Topic Title".
 
 ## 3. The Master Action Agent (`action_agent.py`)
-* **Action:** A LangGraph Chat Agent that queries the `acumen_wiki` database to answer user prompts.
-* **Routing:** The agent has access to 5 strict `@tool` functions. It must decide when to use them based on user intent.
+* **2-Stage RAG Pipeline**:
+  - **Stage 1 (Vector Retrieval)**: Retrieves candidates from the local in-memory `acumen_wiki` ChromaDB collection.
+  - **Stage 2 (Cross-Encoder Reranking)**: Employs a high-performance **Gemini 2.5 Flash Cross-Encoder reranker** (`backend/engine/reranker.py`) with semantic caching to refine, rank, and select the top `K` most relevant context pieces, keeping the deployment lightweight and extremely fast.
+* **Action:** A LangGraph Chat Agent that queries the refined context to answer user prompts.
+* **Routing:** The agent has access to 5 strict `@tool` functions. It decides when to use them based on user intent.
 
 ### Tool Definitions:
 1.  **`generate_flashcards`**

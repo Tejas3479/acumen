@@ -6,15 +6,70 @@ export const BASE = process.env.NEXT_PUBLIC_BACKEND_URL ?? "http://localhost:800
 
 type FetchOpts = RequestInit & { token?: string | null };
 
-function withAuth(token: string | null | undefined, opts: RequestInit = {}): RequestInit {
-  if (!token) return opts;
+let activeToken: string | null = null;
+
+/**
+ * Set the global authentication token for the API client to avoid manual passing.
+ */
+export function setApiToken(token: string | null) {
+  activeToken = token;
+}
+
+function withAuth(token?: string | null, opts: RequestInit = {}): RequestInit {
+  const t = token !== undefined ? token : activeToken;
+  if (!t) return opts;
   return {
     ...opts,
     headers: {
       ...(opts.headers ?? {}),
-      Authorization: `Bearer ${token}`,
+      Authorization: `Bearer ${t}`,
     },
   };
+}
+
+// ── Request Deduplication Cache ──────────────────────────────────────────────
+const pendingRequests = new Map<string, Promise<unknown>>();
+
+export function fetchDeduplicated(key: string, fetcher: () => Promise<unknown>): Promise<unknown> {
+  const existing = pendingRequests.get(key);
+  if (existing) {
+    console.log(`[Deduplicator] Sharing pending request for: ${key}`);
+    return existing;
+  }
+  const promise = fetcher().finally(() => {
+    pendingRequests.delete(key);
+  });
+  pendingRequests.set(key, promise);
+  return promise;
+}
+
+// ── Exponential Backoff Retry Helper ──────────────────────────────────────────
+async function fetchWithRetry(
+  url: string,
+  opts: RequestInit,
+  retries = 3,
+  delay = 1000
+): Promise<Response> {
+  try {
+    const res = await fetch(url, opts);
+    if (!res.ok && (res.status >= 500 || res.status === 429) && retries > 0) {
+      console.warn(
+        `⚠️ [API Retry] Status ${res.status} for ${url}. Retrying in ${delay}ms... (${retries} attempts left)`
+      );
+      await new Promise((resolve) => setTimeout(resolve, delay));
+      return fetchWithRetry(url, opts, retries - 1, delay * 2);
+    }
+    return res;
+  } catch (err) {
+    if (retries > 0) {
+      console.warn(
+        `⚠️ [API Retry] Network failure for ${url}. Retrying in ${delay}ms... (${retries} attempts left)`
+      );
+      await new Promise((resolve) => setTimeout(resolve, delay));
+      return fetchWithRetry(url, opts, retries - 1, delay * 2);
+    }
+    throw err;
+  }
 }
 
 /**
@@ -23,31 +78,34 @@ function withAuth(token: string | null | undefined, opts: RequestInit = {}): Req
 async function fetchAPI(endpoint: string, opts: RequestInit = {}) {
   const url = `${BASE}${endpoint}`;
   try {
-    const res = await fetch(url, opts);
+    const res = await fetchWithRetry(url, opts);
     if (!res.ok) {
       let detail = `API error: ${res.status} ${res.statusText}`;
-      try {
-        const errorData = await res.json();
-        detail = errorData.detail ?? detail;
-      } catch (e) {
-        // Fallback if not JSON
-        const text = await res.text().catch(() => "");
-        if (text) detail = text;
+      const text = await res.text().catch(() => "");
+      if (text) {
+        try {
+          const errorData = JSON.parse(text);
+          detail = errorData.detail ?? text;
+        } catch {
+          detail = text;
+        }
       }
       throw new Error(detail);
     }
     return await res.json();
-  } catch (err: any) {
-    // This catches both 'Failed to Fetch' (network error) and the thrown API errors
+  } catch (err: unknown) {
     console.error(`❌ [Acumen API Error] URL: ${url}`);
-    console.error(`Message: ${err.message}`);
-    if (err.stack) console.error("Stack:", err.stack);
+    if (err instanceof Error) {
+      console.error(`Message: ${err.message}`);
+      if (err.stack) console.error("Stack:", err.stack);
+    }
     throw err;
   }
 }
 
 export async function fetchNotebooks(token?: string | null) {
-  return fetchAPI("/api/notebooks", withAuth(token));
+  const cacheKey = `/api/notebooks-${token ?? activeToken ?? "anonymous"}`;
+  return fetchDeduplicated(cacheKey, () => fetchAPI("/api/notebooks", withAuth(token)));
 }
 
 export async function uploadPDF(file: File, token?: string | null) {
@@ -61,11 +119,13 @@ export async function synthesize(sessionId: string, token?: string | null) {
 }
 
 export async function pollStatus(sessionId: string, token?: string | null) {
+  // Status polling should generally not be cached / deduplicated directly unless simultaneous
   return fetchAPI(`/status/${sessionId}`, withAuth(token));
 }
 
 export async function fetchGraphData(sessionId: string, token?: string | null) {
-  return fetchAPI(`/graph-data/${sessionId}`, withAuth(token));
+  const cacheKey = `/graph-data/${sessionId}-${token ?? activeToken ?? "anonymous"}`;
+  return fetchDeduplicated(cacheKey, () => fetchAPI(`/graph-data/${sessionId}`, withAuth(token)));
 }
 
 export async function sendChat(

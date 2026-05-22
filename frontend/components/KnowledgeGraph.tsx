@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useRef, useState, useEffect } from "react";
 import ReactFlow, {
   Background,
   BackgroundVariant,
@@ -19,12 +19,11 @@ import "reactflow/dist/style.css";
 
 import TopicNode from "@/components/TopicNode";
 import type { NodeData, WikiPage } from "@/lib/types";
-import { Wand2 } from "lucide-react";
+import { Wand2, Download } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { toast } from "sonner";
 
 const NODE_TYPES = { topicNode: TopicNode };
-const NODE_W = 220;
-const NODE_H = 120;
 
 // ── Dagre auto-layout ────────────────────────────────────────────────────────
 const getLayoutedElements = (nodes: Node[], edges: Edge[], direction = 'TB') => {
@@ -80,7 +79,14 @@ export default function KnowledgeGraph({
   const [nodes, setNodes, onNodesChange] = useNodesState<NodeData>(initialNodes);
   const [edges, setEdges, onEdgesChange] = useEdgesState(initialEdges);
   const [animating, setAnimating] = useState(false);
-  const rfRef = useRef<{ fitView: () => void } | null>(null);
+  const lastLayoutSignatureRef = useRef<string>("");
+
+  // Sync state if props change (e.g. switching notebooks)
+  useEffect(() => {
+    setNodes(initialNodes);
+    setEdges(initialEdges);
+    lastLayoutSignatureRef.current = ""; // Reset layout cache
+  }, [initialNodes, initialEdges, setNodes, setEdges]);
 
   const onConnect = useCallback(
     (connection: Connection) =>
@@ -90,14 +96,29 @@ export default function KnowledgeGraph({
 
   const { fitView } = useReactFlow();
 
-  // Dagre layout button
+  // Dagre layout with caching to prevent O(N^2) jank
   const handleLayout = useCallback(() => {
+    const signature = `${nodes.length}-${edges.length}-${JSON.stringify(
+      edges.map((e) => `${e.source}-${e.target}`)
+    )}`;
+
+    if (lastLayoutSignatureRef.current === signature) {
+      console.log("⚡ [Dagre Layout] Graph structure unchanged. Using cached layout.");
+      fitView({ duration: 800, padding: 0.2 });
+      return;
+    }
+
     setAnimating(true);
     const { layoutedNodes, layoutedEdges } = getLayoutedElements(nodes, edges);
-    setNodes(layoutedNodes.map((n) => ({ ...n, style: { transition: "all 0.6s cubic-bezier(0.34, 1.56, 0.64, 1)" } })));
+    setNodes(
+      layoutedNodes.map((n) => ({
+        ...n,
+        style: { transition: "all 0.6s cubic-bezier(0.34, 1.56, 0.64, 1)" },
+      }))
+    );
     setEdges(layoutedEdges);
-    
-    // Animate view after nodes move
+    lastLayoutSignatureRef.current = signature;
+
     setTimeout(() => {
       fitView({ duration: 800, padding: 0.2 });
       setAnimating(false);
@@ -113,18 +134,16 @@ export default function KnowledgeGraph({
     [wikiPages, onNodeClick]
   );
 
-  // Called by the Sheet when the user types [[Node Name]]
+  // Obsidian live linking algorithm
   const addObsidianEdge = useCallback(
     (sourceClusterId: number, noteText: string) => {
       const refs = parseObsidianLinks(noteText);
       refs.forEach((ref) => {
-        const targetNode = nodes.find(
-          (n) => n.data.label.toLowerCase().includes(ref)
+        const targetNode = nodes.find((n) =>
+          n.data.label.toLowerCase().includes(ref)
         );
         if (!targetNode) return;
-        const sourceNode = nodes.find(
-          (n) => n.data.cluster_id === sourceClusterId
-        );
+        const sourceNode = nodes.find((n) => n.data.cluster_id === sourceClusterId);
         if (!sourceNode) return;
         const edgeId = `obsidian-${sourceNode.id}-${targetNode.id}`;
         setEdges((eds) => {
@@ -147,24 +166,57 @@ export default function KnowledgeGraph({
     [nodes, setEdges]
   );
 
-  // Expose addObsidianEdge via ref-like callback on a stable element
-  // (parent uses this via prop drilling; see page.tsx)
+  // Expose via ref-like callback on a stable static attribute
   (KnowledgeGraph as { _addObsidianEdge?: typeof addObsidianEdge })._addObsidianEdge =
     addObsidianEdge;
 
+  // JSON Graph Export Handler
+  const handleExportJSON = () => {
+    try {
+      const payload = {
+        exportedAt: new Date().toISOString(),
+        nodes: nodes.map((n) => ({ id: n.id, data: n.data, position: n.position })),
+        edges: edges.map((e) => ({ id: e.id, source: e.source, target: e.target, label: e.label })),
+      };
+      const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = `acumen_graph_${Date.now()}.json`;
+      link.click();
+      URL.revokeObjectURL(url);
+      toast.success("Graph configuration exported successfully as JSON!");
+    } catch {
+      toast.error("Failed to export graph configuration.");
+    }
+  };
+
   return (
     <div className="relative w-full h-full">
-      {/* Dagre layout button (The Magic Wand) */}
+      {/* Control Buttons */}
       {nodes.length > 0 && (
-        <div className="absolute top-4 right-4 z-50">
+        <div className="absolute top-4 right-4 z-50 flex gap-2">
           <Button
             variant="secondary"
             onClick={handleLayout}
             disabled={animating}
-            className="group px-4 py-2 bg-[#0a0a0b]/60 backdrop-blur-xl border border-white/10 hover:border-indigo-500/50 hover:bg-indigo-500/10 text-white rounded-xl shadow-2xl transition-all duration-300"
+            className="group px-3 py-1.5 bg-[#0a0a0b]/60 backdrop-blur-xl border border-white/10 hover:border-indigo-500/50 hover:bg-indigo-500/10 text-white rounded-xl shadow-2xl transition-all duration-300 h-9"
           >
-            <Wand2 className={`w-4 h-4 mr-2 transition-transform duration-500 ${animating ? "rotate-180 text-indigo-400" : "group-hover:rotate-12"}`} />
-            <span className="text-xs font-mono uppercase tracking-wider">Clean Layout</span>
+            <Wand2
+              className={`w-3.5 h-3.5 mr-2 transition-transform duration-500 ${
+                animating ? "rotate-180 text-indigo-400" : "group-hover:rotate-12"
+              }`}
+            />
+            <span className="text-[10px] font-mono uppercase tracking-wider">Clean Layout</span>
+          </Button>
+
+          <Button
+            variant="secondary"
+            onClick={handleExportJSON}
+            className="group px-3 py-1.5 bg-[#0a0a0b]/60 backdrop-blur-xl border border-white/10 hover:border-indigo-500/50 hover:bg-indigo-500/10 text-white rounded-xl shadow-2xl transition-all duration-300 h-9"
+          >
+            <Download className="w-3.5 h-3.5 mr-2 group-hover:translate-y-0.5 transition-transform" />
+            <span className="text-[10px] font-mono uppercase tracking-wider">Export JSON</span>
           </Button>
         </div>
       )}
@@ -188,20 +240,14 @@ export default function KnowledgeGraph({
           color="rgba(255,255,255,0.06)"
         />
         <Controls />
-        <MiniMap
-          nodeColor={() => "#7c3aed"}
-          maskColor="rgba(10,10,15,0.7)"
-        />
+        <MiniMap nodeColor={() => "#7c3aed"} maskColor="rgba(10,10,15,0.7)" />
       </ReactFlow>
     </div>
   );
 }
 
 // Expose addObsidianEdge as a static method for the parent
-KnowledgeGraph.addObsidianEdge = (
-  sourceClusterId: number,
-  noteText: string
-) => {
+KnowledgeGraph.addObsidianEdge = (sourceClusterId: number, noteText: string) => {
   const fn = (KnowledgeGraph as { _addObsidianEdge?: (a: number, b: string) => void })
     ._addObsidianEdge;
   if (fn) fn(sourceClusterId, noteText);

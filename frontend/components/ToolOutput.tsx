@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import React, { Component, ErrorInfo, ReactNode, useState } from "react";
 import {
   Globe,
   BookOpen,
@@ -8,16 +8,53 @@ import {
   Server,
   TrendingUp,
   CheckSquare,
-  Square,
-  Download,
   RotateCcw,
-  AlertCircle,
-  Sparkles,
+  Download,
+  Check,
 } from "lucide-react";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
+
+// ── Error Boundary Component ──────────────────────────────────────────────────
+interface ErrorBoundaryProps {
+  children?: ReactNode;
+}
+
+interface ErrorBoundaryState {
+  hasError: boolean;
+  error: Error | null;
+}
+
+class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundaryState> {
+  public state: ErrorBoundaryState = {
+    hasError: false,
+    error: null,
+  };
+
+  public static getDerivedStateFromError(error: Error): ErrorBoundaryState {
+    return { hasError: true, error };
+  }
+
+  public componentDidCatch(error: Error, errorInfo: ErrorInfo) {
+    console.error("❌ [ToolOutput ErrorBoundary] caught a rendering crash:", error, errorInfo);
+  }
+
+  public render() {
+    if (this.state.hasError) {
+      return (
+        <div className="rounded-xl border border-red-500/20 bg-red-500/5 p-4 mt-3 text-red-400 text-xs">
+          <p className="font-semibold mb-1">⚠️ Render Error in Tool Output</p>
+          <p className="opacity-80 font-mono text-[10px]">
+            {this.state.error?.message || "Invalid or malformed tool payload structure."}
+          </p>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
 
 interface ToolOutputProps {
   toolName: string;
@@ -37,7 +74,6 @@ function FlashcardDeck({ cards }: { cards: { q: string; a: string }[] }) {
 
   return (
     <div className="mt-3 space-y-3">
-      {/* Header row */}
       <div className="flex items-center justify-between px-1">
         <div className="flex items-center gap-2">
           <BookOpen className="w-3.5 h-3.5 text-[#7c3aed]" />
@@ -98,16 +134,18 @@ function FlashcardDeck({ cards }: { cards: { q: string; a: string }[] }) {
 // ─────────────────────────────────────────────────────────────────────────────
 // 2. ARCHITECTURE — Sleek cards with icons
 // ─────────────────────────────────────────────────────────────────────────────
-function ArchCard({
-  data,
-}: {
-  data: { databases: string[]; apis: string[]; scaling: string };
-}) {
+interface ArchData {
+  databases: string[];
+  apis: string[];
+  scaling: string;
+}
+
+function ArchCard({ data }: { data: ArchData }) {
   const sections = [
     {
       icon: Database,
       label: "Databases",
-      items: data.databases,
+      items: data.databases || [],
       color: "#7c3aed",
       bg: "rgba(124,58,237,0.08)",
       border: "rgba(124,58,237,0.25)",
@@ -115,7 +153,7 @@ function ArchCard({
     {
       icon: Server,
       label: "APIs & Services",
-      items: data.apis,
+      items: data.apis || [],
       color: "#06b6d4",
       bg: "rgba(6,182,212,0.08)",
       border: "rgba(6,182,212,0.25)",
@@ -196,7 +234,12 @@ function ArchCard({
 // ─────────────────────────────────────────────────────────────────────────────
 // 3. ACTION ITEMS — Interactive checklist with Priority
 // ─────────────────────────────────────────────────────────────────────────────
-function ActionList({ items }: { items: { task: string; priority: string }[] }) {
+interface ActionItem {
+  task: string;
+  priority: string;
+}
+
+function ActionList({ items }: { items: ActionItem[] }) {
   const [checked, setChecked] = useState<Record<number, boolean>>({});
 
   const toggle = (i: number) =>
@@ -205,11 +248,15 @@ function ActionList({ items }: { items: { task: string; priority: string }[] }) 
   const doneCount = Object.values(checked).filter(Boolean).length;
 
   const getPriorityColor = (p: string) => {
-    switch (p.toLowerCase()) {
-      case "high": return "bg-red-500/10 text-red-400 border-red-500/30";
-      case "medium": return "bg-amber-500/10 text-amber-400 border-amber-500/30";
-      case "low": return "bg-blue-500/10 text-blue-400 border-blue-500/30";
-      default: return "bg-slate-500/10 text-slate-400 border-slate-500/30";
+    switch (String(p).toLowerCase()) {
+      case "high":
+        return "bg-red-500/10 text-red-400 border-red-500/30";
+      case "medium":
+        return "bg-amber-500/10 text-amber-400 border-amber-500/30";
+      case "low":
+        return "bg-blue-500/10 text-blue-400 border-blue-500/30";
+      default:
+        return "bg-slate-500/10 text-slate-400 border-slate-500/30";
     }
   };
 
@@ -259,7 +306,11 @@ function ActionList({ items }: { items: { task: string; priority: string }[] }) 
                 </Label>
                 {!checked[i] && (
                   <div className="flex items-center gap-2">
-                    <span className={`text-[10px] uppercase font-bold px-1.5 py-0.5 rounded border ${getPriorityColor(item.priority)}`}>
+                    <span
+                      className={`text-[10px] uppercase font-bold px-1.5 py-0.5 rounded border ${getPriorityColor(
+                        item.priority
+                      )}`}
+                    >
                       {item.priority}
                     </span>
                   </div>
@@ -276,23 +327,39 @@ function ActionList({ items }: { items: { task: string; priority: string }[] }) 
 // ─────────────────────────────────────────────────────────────────────────────
 // 4. CREATOR SCRIPT
 // ─────────────────────────────────────────────────────────────────────────────
-function CreatorScript({
-  data,
-}: {
-  data: {
-    hook: string;
-    intro: string;
-    core_content: { section: string; talking_points: string[] }[];
-    call_to_action: string;
-  };
-}) {
+interface CreatorScriptData {
+  hook: string;
+  intro: string;
+  core_content: { section: string; talking_points: string[] }[];
+  call_to_action: string;
+}
+
+function CreatorScript({ data }: { data: CreatorScriptData }) {
   return (
     <div className="mt-3 space-y-3">
       {[
-        { emoji: "🎣", label: "Hook", content: data.hook, color: "#f59e0b", border: "rgba(245,158,11,0.25)", bg: "rgba(245,158,11,0.07)" },
-        { emoji: "🎬", label: "Intro", content: data.intro, color: "#7c3aed", border: "rgba(124,58,237,0.25)", bg: "rgba(124,58,237,0.07)" },
+        {
+          emoji: "🎣",
+          label: "Hook",
+          content: data.hook,
+          color: "#f59e0b",
+          border: "rgba(245,158,11,0.25)",
+          bg: "rgba(245,158,11,0.07)",
+        },
+        {
+          emoji: "🎬",
+          label: "Intro",
+          content: data.intro,
+          color: "#7c3aed",
+          border: "rgba(124,58,237,0.25)",
+          bg: "rgba(124,58,237,0.07)",
+        },
       ].map(({ emoji, label, content, color, border, bg }) => (
-        <div key={label} className="rounded-xl p-4 border" style={{ background: bg, borderColor: border }}>
+        <div
+          key={label}
+          className="rounded-xl p-4 border"
+          style={{ background: bg, borderColor: border }}
+        >
           <p className="text-[10px] font-bold uppercase tracking-widest mb-2" style={{ color }}>
             {emoji} {label}
           </p>
@@ -300,8 +367,13 @@ function CreatorScript({
         </div>
       ))}
 
-      <div className="rounded-xl border border-[#06b6d4]/25 p-4" style={{ background: "rgba(6,182,212,0.07)" }}>
-        <p className="text-[10px] font-bold uppercase tracking-widest text-[#06b6d4] mb-3">📋 Core Content</p>
+      <div
+        className="rounded-xl border border-[#06b6d4]/25 p-4"
+        style={{ background: "rgba(6,182,212,0.07)" }}
+      >
+        <p className="text-[10px] font-bold uppercase tracking-widest text-[#06b6d4] mb-3">
+          📋 Core Content
+        </p>
         <div className="space-y-3">
           {data.core_content?.map((sec, i) => (
             <div key={i}>
@@ -309,7 +381,8 @@ function CreatorScript({
               <ul className="space-y-1.5 pl-2">
                 {sec.talking_points?.map((pt, j) => (
                   <li key={j} className="text-sm text-slate-400 flex gap-2 leading-relaxed">
-                    <span className="text-[#06b6d4] mt-0.5 shrink-0">·</span>{pt}
+                    <span className="text-[#06b6d4] mt-0.5 shrink-0">·</span>
+                    {pt}
                   </li>
                 ))}
               </ul>
@@ -318,8 +391,13 @@ function CreatorScript({
         </div>
       </div>
 
-      <div className="rounded-xl border border-[#10b981]/25 p-4" style={{ background: "rgba(16,185,129,0.07)" }}>
-        <p className="text-[10px] font-bold uppercase tracking-widest text-[#10b981] mb-2">🚀 Call to Action</p>
+      <div
+        className="rounded-xl border border-[#10b981]/25 p-4"
+        style={{ background: "rgba(16,185,129,0.07)" }}
+      >
+        <p className="text-[10px] font-bold uppercase tracking-widest text-[#10b981] mb-2">
+          🚀 Call to Action
+        </p>
         <p className="text-sm text-slate-300 leading-relaxed">{data.call_to_action}</p>
       </div>
     </div>
@@ -327,18 +405,23 @@ function CreatorScript({
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// 5. Main dispatcher
+// 5. TWITTER THREAD
 // ─────────────────────────────────────────────────────────────────────────────
 function TwitterThread({ thread }: { thread: string[] }) {
   return (
     <div className="mt-3 space-y-3">
       <div className="flex items-center gap-2 px-1">
-        <Sparkles className="w-3.5 h-3.5 text-sky-400" />
-        <span className="text-xs font-semibold text-slate-300 uppercase tracking-wider">Viral Twitter Thread</span>
+        <TrendingUp className="w-3.5 h-3.5 text-sky-400" />
+        <span className="text-xs font-semibold text-slate-300 uppercase tracking-wider">
+          Viral Twitter Thread
+        </span>
       </div>
       <div className="space-y-2">
         {thread.map((tweet, i) => (
-          <div key={i} className="rounded-xl border border-sky-500/20 bg-sky-500/5 p-4 relative group">
+          <div
+            key={i}
+            className="rounded-xl border border-sky-500/20 bg-sky-500/5 p-4 relative group"
+          >
             <div className="absolute -left-2 top-4 w-5 h-5 rounded-full bg-[#0a0a0f] border border-sky-500/30 flex items-center justify-center text-[10px] font-mono text-sky-400">
               {i + 1}
             </div>
@@ -353,7 +436,12 @@ function TwitterThread({ thread }: { thread: string[] }) {
 // ─────────────────────────────────────────────────────────────────────────────
 // 6. OBSIDIAN NOTE — Markdown preview + Copy/Download
 // ─────────────────────────────────────────────────────────────────────────────
-function ObsidianNote({ data }: { data: { filename: string; markdown: string } }) {
+interface ObsidianNoteData {
+  filename: string;
+  markdown: string;
+}
+
+function ObsidianNote({ data }: { data: ObsidianNoteData }) {
   const [copied, setCopied] = useState(false);
 
   const handleCopy = () => {
@@ -386,7 +474,11 @@ function ObsidianNote({ data }: { data: { filename: string; markdown: string } }
             onClick={handleCopy}
             className="flex items-center gap-1 text-[11px] text-slate-500 hover:text-slate-300 transition-colors"
           >
-            {copied ? <CheckSquare className="w-3 h-3 text-emerald-500" /> : <RotateCcw className="w-3 h-3" />}
+            {copied ? (
+              <Check className="w-3 h-3 text-emerald-500" />
+            ) : (
+              <RotateCcw className="w-3 h-3" />
+            )}
             {copied ? "Copied" : "Copy"}
           </button>
           <button
@@ -399,7 +491,9 @@ function ObsidianNote({ data }: { data: { filename: string; markdown: string } }
       </div>
 
       <div className="rounded-xl border border-orange-500/20 bg-orange-500/5 p-4 max-h-[300px] overflow-y-auto custom-scrollbar">
-        <p className="text-[10px] font-mono text-orange-500/60 mb-2 uppercase tracking-widest">{data.filename}</p>
+        <p className="text-[10px] font-mono text-orange-500/60 mb-2 uppercase tracking-widest">
+          {data.filename}
+        </p>
         <pre className="text-xs text-slate-300 whitespace-pre-wrap font-mono leading-relaxed">
           {data.markdown}
         </pre>
@@ -408,49 +502,58 @@ function ObsidianNote({ data }: { data: { filename: string; markdown: string } }
   );
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// 7. WEB SEARCH RESULTS
+// ─────────────────────────────────────────────────────────────────────────────
+function WebSearchResult({ output }: { output: unknown }) {
+  return (
+    <div
+      className="rounded-xl border border-[#06b6d4]/30 p-4 mt-3"
+      style={{ background: "rgba(6,182,212,0.05)" }}
+    >
+      <div className="flex items-center gap-2 mb-2">
+        <Globe className="w-3.5 h-3.5 text-[#06b6d4]" />
+        <span className="text-xs font-medium text-[#06b6d4]">Live Web Result</span>
+      </div>
+      <p className="text-sm text-slate-300 leading-relaxed whitespace-pre-wrap">
+        {String(output)}
+      </p>
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 8. RENDERER REGISTRY
+// ─────────────────────────────────────────────────────────────────────────────
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const RENDERERS: Record<string, (output: any) => React.ReactNode> = {
+  generate_flashcards: (output) => <FlashcardDeck cards={output} />,
+  architecture_assist: (output) => <ArchCard data={output} />,
+  extract_action_items: (output) => <ActionList items={output} />,
+  generate_creator_script: (output) => <CreatorScript data={output} />,
+  generate_tweet_thread: (output) => <TwitterThread thread={output} />,
+  generate_obsidian_markdown: (output) => <ObsidianNote data={output} />,
+  live_web_search: (output) => <WebSearchResult output={output} />,
+  duckduckgo_search: (output) => <WebSearchResult output={output} />,
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 9. Main Exported Dispatcher
+// ─────────────────────────────────────────────────────────────────────────────
 export default function ToolOutput({ toolName, output }: ToolOutputProps) {
   if (!output) return null;
 
-  try {
-    if (toolName === "generate_flashcards" && Array.isArray(output))
-      return <FlashcardDeck cards={output as { q: string; a: string }[]} />;
-
-    if (toolName === "architecture_assist" && typeof output === "object")
-      return <ArchCard data={output as { databases: string[]; apis: string[]; scaling: string }} />;
-
-    if (toolName === "extract_action_items" && Array.isArray(output))
-      return <ActionList items={output as { task: string; priority: string }[]} />;
-
-    if (toolName === "generate_creator_script" && typeof output === "object")
-      return (
-        <CreatorScript
-          data={output as { hook: string; intro: string; core_content: { section: string; talking_points: string[] }[]; call_to_action: string }}
-        />
-      );
-
-    if (toolName === "generate_tweet_thread" && Array.isArray(output))
-      return <TwitterThread thread={output as string[]} />;
-
-    if (toolName === "generate_obsidian_markdown" && typeof output === "object")
-      return <ObsidianNote data={output as { filename: string; markdown: string }} />;
-
-    if (toolName === "live_web_search" || toolName === "duckduckgo_search")
-      return (
-        <div className="rounded-xl border border-[#06b6d4]/30 p-4 mt-3" style={{ background: "rgba(6,182,212,0.05)" }}>
-          <div className="flex items-center gap-2 mb-2">
-            <Globe className="w-3.5 h-3.5 text-[#06b6d4]" />
-            <span className="text-xs font-medium text-[#06b6d4]">Live Web Result</span>
-          </div>
-          <p className="text-sm text-slate-300 leading-relaxed whitespace-pre-wrap">{String(output)}</p>
-        </div>
-      );
-  } catch {
-    /* fall through */
-  }
+  const renderFn = RENDERERS[toolName];
 
   return (
-    <pre className="text-xs text-slate-400 bg-white/5 rounded-xl p-3 overflow-x-auto mt-2 border border-white/8">
-      {JSON.stringify(output, null, 2)}
-    </pre>
+    <ErrorBoundary>
+      {renderFn ? (
+        renderFn(output)
+      ) : (
+        <pre className="text-xs text-slate-400 bg-white/5 rounded-xl p-3 overflow-x-auto mt-2 border border-white/8">
+          {JSON.stringify(output, null, 2)}
+        </pre>
+      )}
+    </ErrorBoundary>
   );
 }

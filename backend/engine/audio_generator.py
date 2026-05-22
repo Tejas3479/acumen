@@ -40,8 +40,9 @@ async def generate_podcast_audio(text: str, session_id: str) -> str:
                 lambda: client.text_to_speech(text, model=model_id)
             )
             
-            # Determine a safe temp directory across OS
-            tmp_dir = "/tmp" if os.name != "nt" else tempfile.gettempdir()
+            # Determine a safe workspace-isolated temp directory
+            data_dir = os.environ.get("ACUMEN_DATA_DIR", "./data")
+            tmp_dir = os.path.join(data_dir, "temp")
             if not os.path.exists(tmp_dir):
                 os.makedirs(tmp_dir, exist_ok=True)
                 

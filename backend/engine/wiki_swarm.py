@@ -65,28 +65,16 @@ def get_wiki_collection() -> chromadb.Collection:
     
     if _wiki_collection is None:
         # Resilient embedding function initialization
-        embedding_fn = None
-        if os.getenv("GOOGLE_API_KEY"):
-            try:
-                embedding_fn = GeminiEmbeddingFunction(model_name="models/gemini-embedding-001")
-                logger.info("ChromaDB using Gemini gemini-embedding-001.")
-            except Exception as e:
-                logger.warning("Gemini embedding init failed: %s. Falling back to local.", e)
+        api_key = os.getenv("GOOGLE_API_KEY")
+        if not api_key:
+            raise RuntimeError("GOOGLE_API_KEY is not set in environment variables.")
 
-        if embedding_fn is None:
-            try:
-                from langchain_community.embeddings import HuggingFaceEmbeddings
-                hf = HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2")
-                
-                class HFEmbedFunction(EmbeddingFunction):
-                    def __call__(self, input: Documents) -> Embeddings:
-                        return hf.embed_documents(list(input))
-                
-                embedding_fn = HFEmbedFunction()
-                logger.info("ChromaDB using local HuggingFace all-MiniLM-L6-v2.")
-            except Exception as e:
-                logger.error("All embedding functions failed: %s", e)
-                raise
+        try:
+            embedding_fn = GeminiEmbeddingFunction(model_name="models/gemini-embedding-001")
+            logger.info("ChromaDB using Gemini gemini-embedding-001.")
+        except Exception as e:
+            logger.error("Gemini embedding initialization failed: %s", e)
+            raise RuntimeError(f"Failed to initialize Gemini embedding function: {e}") from e
         
         _wiki_collection = _chroma_client.get_or_create_collection(
             name=CHROMA_COLLECTION_NAME,
@@ -270,7 +258,7 @@ async def synthesize_wiki_pages(state: SwarmState) -> SwarmState:
         # Run synthesis in a separate thread if not already async
         # Since _synthesize_cluster is sync (uses LangChain's .invoke), 
         # we wrap it to avoid blocking the event loop.
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         try:
             wiki_page = await loop.run_in_executor(None, _synthesize_cluster, cluster_id, clusters[cluster_id])
             return wiki_page.model_dump()

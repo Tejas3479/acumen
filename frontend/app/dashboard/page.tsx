@@ -62,6 +62,8 @@ export default function DashboardPage() {
         activeNotebookId={null} 
         onSelectNotebook={(id) => router.push(`/?sessionId=${id}`)}
         onNewNotebook={() => router.push("/")}
+        activeView="library"
+        onViewChange={() => {}}
       />
 
       {/* Main Content Area */}

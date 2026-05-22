@@ -24,13 +24,17 @@ from contextlib import asynccontextmanager
 from typing import Any, Dict, List, Optional
 
 from dotenv import load_dotenv
-from fastapi import BackgroundTasks, Depends, FastAPI, File, HTTPException, UploadFile
-from fastapi.responses import FileResponse
+from fastapi import BackgroundTasks, Depends, FastAPI, File, HTTPException, UploadFile, Request
+from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
 # Load .env (GOOGLE_API_KEY etc.) before any engine imports
 load_dotenv()
+
+# Secure key decryption at rest (OWASP A02:2021)
+from engine.key_manager import initialize_keys
+initialize_keys()
 
 # ---------------------------------------------------------------------------
 # Persistent storage paths — configured BEFORE engine imports
@@ -42,12 +46,23 @@ os.makedirs(DATA_DIR, exist_ok=True)
 # Propagate the ChromaDB path so wiki_swarm picks it up at import time
 os.environ.setdefault("ACUMEN_CHROMA_PATH", os.path.join(DATA_DIR, "chroma_db"))
 
-from engine.ingest import ingest_pdf, ingest_url                  # noqa: E402
+from engine.ingest import ingest_file, ingest_url                  # noqa: E402
 from engine.wiki_swarm import run_wiki_swarm, build_reactflow_data  # noqa: E402
 from engine.action_agent import run_agent_chat                  # noqa: E402
 from engine.audio import generate_audio_script                  # noqa: E402
 from engine.auth import ClerkUser, get_current_user             # noqa: E402
 from engine.audio_generator import generate_podcast_audio       # noqa: E402
+from engine.sanitizer import sanitize_chat_input, is_safe_url   # noqa: E402
+from engine.audit import (                                      # noqa: E402
+    log_event,
+    get_client_ip,
+    AUDIT_UPLOAD,
+    AUDIT_SYNTHESIZE,
+    AUDIT_CHAT,
+    AUDIT_GRAPH_ACCESS,
+    AUDIT_INJECTION_BLOCK,
+    AUDIT_URL_BLOCKED,
+)
 
 # ---------------------------------------------------------------------------
 # Logging
@@ -78,6 +93,21 @@ app = FastAPI(
     version="0.1.0",
     lifespan=lifespan,
 )
+
+# ---------------------------------------------------------------------------
+# HTTPS Enforcement Middleware (OWASP A02:2021)
+# ---------------------------------------------------------------------------
+@app.middleware("http")
+async def enforce_https_middleware(request: Request, call_next):
+    if os.getenv("ENVIRONMENT") == "production":
+        proto = request.headers.get("X-Forwarded-Proto")
+        if proto == "http" or request.url.scheme == "http":
+            if request.url.hostname not in ("localhost", "127.0.0.1"):
+                url = request.url.replace(scheme="https")
+                from fastapi.responses import RedirectResponse
+                return RedirectResponse(url, status_code=307)
+    return await call_next(request)
+
 
 # ---------------------------------------------------------------------------
 # CORS — allow everything for local dev and prevent 'Failed to Fetch'
@@ -362,29 +392,34 @@ async def health_check() -> Dict[str, str]:
 
 @app.post("/upload", response_model=UploadResponse, tags=["ingestion"])
 async def upload_pdf(
+    request: Request,
     background_tasks: BackgroundTasks,
     session_id: Optional[str] = None,
     file: UploadFile = File(...),
     user: ClerkUser = Depends(get_current_user),
 ) -> UploadResponse:
     """
-    Accepts a PDF, runs the ML clustering pipeline, and returns a
-    structured preview of the discovered topic clusters.
+    Accepts a PDF, DOCX, TXT, MD, or HTML document, runs the ML clustering pipeline,
+    and returns a structured preview of the discovered topic clusters.
     If session_id is provided, appends the chunks to the existing notebook.
     """
-    if not file.filename or not file.filename.lower().endswith(".pdf"):
-        raise HTTPException(status_code=400, detail="Only PDF files are accepted.")
+    ALLOWED_EXTENSIONS = (".pdf", ".docx", ".txt", ".md", ".html")
+    if not file.filename or not file.filename.lower().endswith(ALLOWED_EXTENSIONS):
+        raise HTTPException(
+            status_code=400,
+            detail=f"Only the following formats are allowed: {', '.join(ALLOWED_EXTENSIONS)}"
+        )
 
     try:
-        pdf_bytes: bytes = await file.read()
+        file_bytes: bytes = await file.read()
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"Could not read file: {exc}") from exc
 
-    if len(pdf_bytes) == 0:
+    if len(file_bytes) == 0:
         raise HTTPException(status_code=400, detail="Uploaded file is empty.")
 
     try:
-        new_clusters: Dict[int, List[str]] = ingest_pdf(pdf_bytes)
+        new_clusters: Dict[int, List[str]] = ingest_file(file_bytes, file.filename)
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     except Exception as exc:
@@ -398,10 +433,22 @@ async def upload_pdf(
     if not session_id:
         session_id = str(uuid.uuid4())
 
+    # Log successful ingestion enqueuing event to audit trail
+    ext = (file.filename or "").lower().split(".")[-1]
+    source_type = ext if ext in ("pdf", "docx", "txt", "md", "html") else "pdf"
+    log_event(
+        AUDIT_UPLOAD,
+        user_id=user.clerk_id,
+        session_id=session_id,
+        ip_address=get_client_ip(request),
+        filename=file.filename or "Untitled",
+        source_type=source_type,
+    )
+
     # 2. Start background ingestion + synthesis
     # We move EVERYTHING to the background so the user gets an immediate response.
     background_tasks.add_task(
-        _run_full_ingestion_background, session_id, file.filename or "Untitled", pdf_bytes, user.clerk_id
+        _run_full_ingestion_background, session_id, file.filename or "Untitled", file_bytes, user.clerk_id
     )
     logger.info("Full ingestion pipeline enqueued for session %s.", session_id)
 
@@ -415,6 +462,7 @@ async def upload_pdf(
 
 @app.post("/upload-url", tags=["ingestion"], status_code=202)
 async def upload_url(
+    request: Request,
     req: UrlRequest,
     background_tasks: BackgroundTasks,
     user: ClerkUser = Depends(get_current_user),
@@ -427,6 +475,19 @@ async def upload_url(
     if not req.url:
         raise HTTPException(status_code=400, detail="URL cannot be empty.")
 
+    # Prevent SSRF (OWASP A05:2021)
+    if not is_safe_url(req.url):
+        log_event(
+            AUDIT_URL_BLOCKED,
+            user_id=user.clerk_id,
+            ip_address=get_client_ip(request),
+            url=req.url,
+        )
+        raise HTTPException(
+            status_code=400,
+            detail="Unsafe URL blocked: local and private ranges are prohibited."
+        )
+
     try:
         new_clusters: Dict[int, List[str]] = ingest_url(req.url)
     except ValueError as exc:
@@ -435,6 +496,15 @@ async def upload_url(
         raise HTTPException(status_code=500, detail=f"Ingestion error: {exc}") from exc
 
     session_id = req.session_id or str(uuid.uuid4())
+
+    log_event(
+        AUDIT_UPLOAD,
+        user_id=user.clerk_id,
+        session_id=session_id,
+        ip_address=get_client_ip(request),
+        url=req.url,
+        source_type="url",
+    )
 
     background_tasks.add_task(
         _run_url_ingestion_background, session_id, req.url, user.clerk_id
@@ -469,9 +539,12 @@ def get_session(session_id: str) -> Dict[int, List[str]]:
         raise KeyError(f"Session '{session_id}' exists but is corrupted.") from exc
 
 
-async def _run_full_ingestion_background(session_id: str, title: str, pdf_bytes: bytes, clerk_id: str) -> None:
-    """Worker for full async PDF ingestion pipeline (handles new and append)."""
+async def _run_full_ingestion_background(session_id: str, title: str, file_bytes: bytes, clerk_id: str) -> None:
+    """Worker for full async file ingestion pipeline (handles new and append)."""
     try:
+        ext = title.lower().split(".")[-1]
+        source_type = ext if ext in ("pdf", "docx", "txt", "md", "html") else "pdf"
+
         # Check if we are appending
         row = db.get_notebook(session_id)
         existing_clusters = {}
@@ -479,11 +552,11 @@ async def _run_full_ingestion_background(session_id: str, title: str, pdf_bytes:
             existing_clusters = json.loads(row["clusters_json"] or "{}")
             logger.info("Appending to existing session %s", session_id)
         else:
-            db.save_notebook(session_id, title, {}, clerk_id)
+            db.save_notebook(session_id, title, {}, clerk_id, source_type=source_type)
 
         db.update_status(session_id, "ingesting")
         
-        new_clusters = ingest_pdf(pdf_bytes)
+        new_clusters = ingest_file(file_bytes, title)
         # Convert new clusters keys to strings for consistency
         new_clusters_str = {str(k): v for k, v in new_clusters.items()}
         
@@ -493,12 +566,12 @@ async def _run_full_ingestion_background(session_id: str, title: str, pdf_bytes:
             offset = max(existing_keys) + 1 if existing_keys else 0
             offset_new = {str(int(k) + offset): v for k, v in new_clusters_str.items()}
             combined = {**existing_clusters, **offset_new}
-            db.save_notebook(session_id, row["title"], combined, clerk_id, source_type="pdf")
+            db.save_notebook(session_id, row["title"], combined, clerk_id, source_type=row["source_type"])
             # Re-convert to int keys for in-memory session
             _sessions[session_id] = {int(k): v for k, v in combined.items()}
             swarm_clusters = {int(k): v for k, v in offset_new.items()} # Only swarm the new ones
         else:
-            db.save_notebook(session_id, title, new_clusters, clerk_id, source_type="pdf")
+            db.save_notebook(session_id, title, new_clusters, clerk_id, source_type=source_type)
             _sessions[session_id] = new_clusters
             swarm_clusters = new_clusters
 
@@ -564,6 +637,7 @@ async def _run_swarm_background(session_id: str, clusters: Dict[int, List[str]])
 
 @app.post("/synthesize/{session_id}", tags=["swarm"])
 async def synthesize(
+    request: Request,
     session_id: str,
     background_tasks: BackgroundTasks,
     user: ClerkUser = Depends(get_current_user),
@@ -590,6 +664,14 @@ async def synthesize(
         clusters = get_session(session_id)
     except KeyError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+    # Log successful synthesis initiation to audit trail
+    log_event(
+        AUDIT_SYNTHESIZE,
+        user_id=user.clerk_id,
+        session_id=session_id,
+        ip_address=get_client_ip(request),
+    )
 
     background_tasks.add_task(_run_swarm_background, session_id, clusters)
     logger.info("Swarm enqueued in background for session %s.", session_id)
@@ -657,8 +739,77 @@ async def get_status(
     )
 
 
+@app.get("/status/{session_id}/stream", tags=["swarm"])
+async def status_stream(
+    session_id: str,
+    user: ClerkUser = Depends(get_current_user),
+):
+    """
+    Establish a Server-Sent Events (SSE) connection to stream notebook processing status in real-time.
+    """
+    # 1. Verify existence of the notebook first
+    row = db.get_notebook(session_id)
+    if row is None:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Session '{session_id}' not found.",
+        )
+
+    # 2. Ownership check
+    if row["clerk_id"] and row["clerk_id"] != user.clerk_id:
+        raise HTTPException(
+            status_code=403,
+            detail="You do not have access to this notebook.",
+        )
+
+    async def event_generator():
+        import asyncio
+        last_status = None
+        
+        # We poll the SQLite DB every 1 second and yield updates to the client
+        for _ in range(300): # Limit to 5 minutes to prevent infinite hanging connections
+            current_row = db.get_notebook(session_id)
+            if not current_row:
+                yield f"data: {json.dumps({'status': 'error', 'detail': 'Notebook deleted'})}\n\n"
+                break
+                
+            current_status = current_row["status"]
+            
+            # If status changed, yield it
+            if current_status != last_status:
+                last_status = current_status
+                payload = {"status": current_status}
+                
+                # If completed, include cluster preview
+                if current_status == "completed":
+                    try:
+                        raw_clusters = json.loads(current_row["clusters_json"] or "{}")
+                        clusters_preview = [
+                            {
+                                "cluster_id": int(cid),
+                                "chunk_count": len(chunks),
+                                "preview": chunks[0][:300] if chunks else "",
+                            }
+                            for cid, chunks in sorted(raw_clusters.items(), key=lambda x: int(x[0]))
+                        ]
+                        payload["clusters"] = clusters_preview
+                    except Exception as exc:
+                        logger.warning("Could not build cluster preview in SSE stream for %s: %s", session_id, exc)
+                
+                yield f"data: {json.dumps(payload)}\n\n"
+            
+            # If completed or error, stop streaming
+            if current_status in ("completed", "error"):
+                break
+                
+            await asyncio.sleep(1.0)
+            
+    return StreamingResponse(event_generator(), media_type="text/event-stream")
+
+
 @app.post("/chat", response_model=ChatResponse, tags=["agent"])
 async def chat_endpoint(
+    request: Request,
     req: ChatRequest,
     user: ClerkUser = Depends(get_current_user),
 ) -> ChatResponse:
@@ -678,13 +829,42 @@ async def chat_endpoint(
     if nb_row and nb_row["clerk_id"] and nb_row["clerk_id"] != user.clerk_id:
         raise HTTPException(status_code=403, detail="You do not have access to this notebook.")
 
+    # 1. Sanitize chat input (OWASP LLM01 - Prompt Injection Defense)
+    sanitized_msg, warnings = sanitize_chat_input(req.message, user_id=user.clerk_id)
+    
+    # Extract client IP
+    client_ip = get_client_ip(request)
+
+    # Log injection blocks if patterns matched
+    if warnings:
+        for w in warnings:
+            log_event(
+                AUDIT_INJECTION_BLOCK,
+                user_id=user.clerk_id,
+                session_id=req.session_id,
+                ip_address=client_ip,
+                pattern_category=w,
+                original_message=req.message[:100],  # log a small snippet
+            )
+
+    # 2. Log safe chat turn
+    log_event(
+        AUDIT_CHAT,
+        user_id=user.clerk_id,
+        session_id=req.session_id,
+        ip_address=client_ip,
+        message_length=len(sanitized_msg),
+    )
+
     history = [h.model_dump() for h in req.history]
 
     try:
         result = await run_agent_chat(
             session_id=req.session_id,
-            user_message=req.message,
+            user_message=sanitized_msg,
             history=history,
+            user_id=user.clerk_id,
+            ip_address=client_ip or "",
         )
         
         # Safely extract text whether Gemini returns a string or a list of blocks
@@ -702,7 +882,11 @@ async def chat_endpoint(
 
 
 @app.get("/graph-data/{session_id}", response_model=GraphDataResponse, tags=["graph"])
-async def graph_data(session_id: str, user: ClerkUser = Depends(get_current_user)) -> GraphDataResponse:
+async def graph_data(
+    request: Request,
+    session_id: str,
+    user: ClerkUser = Depends(get_current_user)
+) -> GraphDataResponse:
     """
     Return a ReactFlow-compatible graph payload for the given session.
 
@@ -719,6 +903,14 @@ async def graph_data(session_id: str, user: ClerkUser = Depends(get_current_user
     nb_row = db.get_notebook(session_id)
     if nb_row and nb_row["clerk_id"] and nb_row["clerk_id"] != user.clerk_id:
         raise HTTPException(status_code=403, detail="Forbidden")
+
+    # Log successful graph access to audit trail
+    log_event(
+        AUDIT_GRAPH_ACCESS,
+        user_id=user.clerk_id,
+        session_id=session_id,
+        ip_address=get_client_ip(request),
+    )
 
     try:
         data = build_reactflow_data(session_id)

@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { Search, Loader2, Globe, FileUp, Sparkles } from "lucide-react";
+import { Search, Loader2, Globe, Sparkles } from "lucide-react";
 import { toast } from "sonner";
 import { useAuth } from "@clerk/nextjs";
 import Dropzone from "./Dropzone";
@@ -49,8 +49,8 @@ export default function IngestionEngine({ mode, sessionId, onUploadComplete, onS
       onStartSynthesis(sid);
       setUrlInput("");
       toast.success(`URL '${domain}' added to knowledge base`);
-    } catch (err: any) {
-      toast.error(err.message || "Invalid URL");
+    } catch (err: unknown) {
+      toast.error(err instanceof Error ? err.message : "Invalid URL");
     } finally {
       setUrlLoading(false);
     }

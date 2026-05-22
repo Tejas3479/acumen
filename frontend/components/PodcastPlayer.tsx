@@ -62,15 +62,16 @@ export default function PodcastPlayer({ sessionId }: { sessionId: string | null 
     fetchScript();
   }, [sessionId, getToken]);
 
-  // Cleanup on unmount (e.g. switching notebooks)
+  // Cleanup on unmount or sessionId change (stop active audio immediately)
   useEffect(() => {
     return () => {
       if (audioRef.current) {
         audioRef.current.pause();
         audioRef.current = null;
       }
+      setPlaying(false);
     };
-  }, []);
+  }, [sessionId]);
 
   const handlePlay = async () => {
     if (!sessionId) {

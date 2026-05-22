@@ -1,7 +1,7 @@
 "use client";
 
 import { Notebook } from "@/lib/types";
-import { Plus, BookText, Menu, LayoutDashboard, Library } from "lucide-react";
+import { Plus, BookText, Menu, LayoutDashboard, Library, Search } from "lucide-react";
 import { Sheet, SheetContent, SheetTrigger, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { useState } from "react";
 
@@ -23,6 +23,7 @@ export default function Sidebar({
   onViewChange
 }: SidebarProps) {
   const [mobileOpen, setMobileOpen] = useState(false);
+  const [searchQuery, setSearchQuery] = useState("");
 
   const handleSelect = (id: string) => {
     onViewChange("workspace");
@@ -35,6 +36,10 @@ export default function Sidebar({
     onNewNotebook();
     setMobileOpen(false);
   };
+
+  const filteredNotebooks = notebooks.filter((nb) =>
+    nb.title.toLowerCase().includes(searchQuery.toLowerCase())
+  );
 
   const renderContent = () => (
     <div className="flex flex-col h-full bg-[#0a0a0b]/40 backdrop-blur-xl border-r border-white/5 w-64 md:w-full">
@@ -66,16 +71,28 @@ export default function Sidebar({
         </button>
       </div>
 
+      {/* Fuzzy search input */}
+      <div className="px-4 py-3 border-b border-white/5 flex items-center relative">
+        <Search className="absolute left-7 w-4 h-4 text-slate-500" />
+        <input
+          type="text"
+          placeholder="Search notebooks..."
+          value={searchQuery}
+          onChange={(e) => setSearchQuery(e.target.value)}
+          className="w-full pl-9 pr-4 py-2 text-xs font-mono bg-white/[0.02] border border-white/5 rounded-xl text-white placeholder-slate-500 focus:outline-none focus:border-indigo-500/50 focus:bg-white/[0.04] transition-all"
+        />
+      </div>
+
       <div className="flex-1 p-4 space-y-3 overflow-y-auto custom-scrollbar">
-        {notebooks.length === 0 ? (
+        {filteredNotebooks.length === 0 ? (
           <div className="px-3 py-10 text-center">
             <BookText className="w-8 h-8 text-white/10 mx-auto mb-3" />
             <p className="text-[11px] font-mono uppercase tracking-widest text-white/30">
-              Vault Empty
+              {searchQuery ? "No matches found" : "Vault Empty"}
             </p>
           </div>
         ) : (
-          notebooks.map((nb) => {
+          filteredNotebooks.map((nb) => {
             const isActive = activeNotebookId === nb.id;
             const dateStr = nb.created_at 
               ? new Date(nb.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: '2-digit' })

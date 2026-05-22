@@ -41,7 +41,13 @@ def generate_audio_script(session_id: str) -> List[Dict[str, str]]:
             HumanMessage(content=f"Document snippets:\n\n{text_content}")
         ])
         
-        raw = resp.content.strip()
+        # Extract string content from response robustly (safeguard against list or complex structures)
+        content = resp.content
+        if isinstance(content, list):
+            raw = " ".join([item.get("text", "") for item in content if isinstance(item, dict) and "text" in item])
+        else:
+            raw = str(content)
+        raw = raw.strip()
         
         # Robustly extract JSON block (array)
         start_arr = raw.find("[")

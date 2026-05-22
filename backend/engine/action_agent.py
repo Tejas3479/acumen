@@ -29,6 +29,7 @@ from langchain_community.tools import DuckDuckGoSearchRun
 
 from engine.wiki_swarm import get_wiki_collection
 from engine.reranker import rerank_documents
+from engine.audit import log_event, AUDIT_TOOL_CALL
 
 logger = logging.getLogger(__name__)
 
@@ -38,14 +39,26 @@ logger = logging.getLogger(__name__)
 # Safe for multi-threaded/concurrent request handling.
 # ---------------------------------------------------------------------------
 _active_session_id: contextvars.ContextVar[str] = contextvars.ContextVar("active_session_id", default="")
+_active_user_id: contextvars.ContextVar[str] = contextvars.ContextVar("active_user_id", default="")
+_active_ip_address: contextvars.ContextVar[str] = contextvars.ContextVar("active_ip_address", default="")
 
 
-def _set_session(session_id: str) -> None:
+def _set_session(session_id: str, user_id: str = "", ip_address: str = "") -> None:
     _active_session_id.set(session_id)
+    _active_user_id.set(user_id)
+    _active_ip_address.set(ip_address)
 
 
 def _get_active_session() -> str:
     return _active_session_id.get()
+
+
+def _get_active_user_id() -> str:
+    return _active_user_id.get()
+
+
+def _get_active_ip_address() -> str:
+    return _active_ip_address.get()
 
 
 # ---------------------------------------------------------------------------
@@ -128,6 +141,14 @@ async def generate_flashcards(query: str) -> str:
     Use when the user asks to study, quiz themselves, test knowledge, or create flash cards.
     Input: the topic or concept to focus on.
     """
+    log_event(
+        AUDIT_TOOL_CALL,
+        user_id=_get_active_user_id(),
+        session_id=_get_active_session(),
+        ip_address=_get_active_ip_address(),
+        tool_name="generate_flashcards",
+        query=query,
+    )
     wiki = await _query_wiki(query or "key concepts definitions")
     raw = _llm_json(_FLASHCARD_SYS, f"Wiki content:\n{wiki}\n\nGenerate 5 flashcards.")
     parsed = json.loads(raw)
@@ -152,6 +173,14 @@ async def architecture_assist(query: str) -> str:
     Use when the user asks how to build a system, needs database, API, or scaling advice.
     Input: the system or technical aspect to focus on.
     """
+    log_event(
+        AUDIT_TOOL_CALL,
+        user_id=_get_active_user_id(),
+        session_id=_get_active_session(),
+        ip_address=_get_active_ip_address(),
+        tool_name="architecture_assist",
+        query=query,
+    )
     wiki = await _query_wiki(query or "system architecture technical requirements")
     return _llm_json(_ARCH_SYS, f"Wiki content:\n{wiki}\n\nRecommend the architecture.")
 
@@ -173,6 +202,14 @@ async def extract_action_items(query: str) -> str:
     Use when the user asks for tasks, next steps, to-dos, or actionable insights.
     Input: the focus area for task extraction.
     """
+    log_event(
+        AUDIT_TOOL_CALL,
+        user_id=_get_active_user_id(),
+        session_id=_get_active_session(),
+        ip_address=_get_active_ip_address(),
+        tool_name="extract_action_items",
+        query=query,
+    )
     wiki = await _query_wiki(query or "tasks action items next steps")
     raw = _llm_json(_ACTION_SYS, f"Wiki content:\n{wiki}\n\nExtract action items.")
     parsed = json.loads(raw)
@@ -207,6 +244,14 @@ async def generate_creator_script(query: str) -> str:
     Returns JSON with hook, intro, core_content sections, and call_to_action.
     Input: the angle, topic, or target audience for the script.
     """
+    log_event(
+        AUDIT_TOOL_CALL,
+        user_id=_get_active_user_id(),
+        session_id=_get_active_session(),
+        ip_address=_get_active_ip_address(),
+        tool_name="generate_creator_script",
+        query=query,
+    )
     wiki = await _query_wiki(query or "main topics key ideas")
     return _llm_json(_SCRIPT_SYS, f"Wiki content:\n{wiki}\n\nWrite the creator script.")
 
@@ -221,6 +266,14 @@ async def live_web_search(query: str) -> str:
     Use ONLY when local knowledge is insufficient or you need up-to-date info.
     Input: the search query.
     """
+    log_event(
+        AUDIT_TOOL_CALL,
+        user_id=_get_active_user_id(),
+        session_id=_get_active_session(),
+        ip_address=_get_active_ip_address(),
+        tool_name="live_web_search",
+        query=query,
+    )
     search = DuckDuckGoSearchRun()
     res = search.run(query)
     return f"[SEARCH_SOURCE: DUCKDUCKGO]\n{res}"
@@ -249,6 +302,14 @@ async def generate_tweet_thread(query: str) -> str:
     Returns JSON list of 5 tweet strings.
     Input: the angle or main takeaway for the thread.
     """
+    log_event(
+        AUDIT_TOOL_CALL,
+        user_id=_get_active_user_id(),
+        session_id=_get_active_session(),
+        ip_address=_get_active_ip_address(),
+        tool_name="generate_tweet_thread",
+        query=query,
+    )
     wiki = await _query_wiki(query or "key insights")
     raw = _llm_json(_TWEET_SYS, f"Wiki content:\n{wiki}\n\nWrite the Twitter thread.")
     parsed = json.loads(raw)
@@ -275,6 +336,14 @@ async def generate_obsidian_markdown(query: str) -> str:
     Returns JSON with 'filename' and 'markdown' string.
     Input: the topic or focus area for the note.
     """
+    log_event(
+        AUDIT_TOOL_CALL,
+        user_id=_get_active_user_id(),
+        session_id=_get_active_session(),
+        ip_address=_get_active_ip_address(),
+        tool_name="generate_obsidian_markdown",
+        query=query,
+    )
     wiki = await _query_wiki(query or "core concepts and technical details")
     return _llm_json(_OBSIDIAN_SYS, f"Wiki content:\n{wiki}\n\nGenerate the Obsidian note.")
 
@@ -380,6 +449,8 @@ async def run_agent_chat(
     session_id: str,
     user_message: str,
     history: Optional[List[Dict[str, str]]] = None,
+    user_id: str = "",
+    ip_address: str = "",
 ) -> Dict[str, Any]:
     """
     Run the Action Agent for a single turn.
@@ -388,6 +459,8 @@ async def run_agent_chat(
         session_id:   UUID from /upload response.
         user_message: User's latest message.
         history:      [{"role": "user"|"assistant", "content": "..."}, ...]
+        user_id:      Clerk user ID.
+        ip_address:   Client IP address.
 
     Returns:
         {"response": str, "tool_used": str|None,
@@ -396,7 +469,7 @@ async def run_agent_chat(
     logger.info("Agent chat | session=%s | '%s'", session_id, user_message[:80])
 
     # Set the module-level session context BEFORE building tools/agent
-    _set_session(session_id)
+    _set_session(session_id, user_id=user_id, ip_address=ip_address)
 
     model = ChatGoogleGenerativeAI(model="gemini-2.5-flash", temperature=0, max_tokens=2048)
     agent = create_react_agent(model, TOOLS)

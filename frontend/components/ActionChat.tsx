@@ -1,67 +1,17 @@
 "use client";
 
 import { useState, useRef, useEffect } from "react";
-import { Send, Globe, Zap, Loader2, BookOpen, Cpu, ListTodo, Clapperboard, Share2 } from "lucide-react";
-import { toast } from "sonner";
+import { Send, Zap, Loader2, BookOpen, Cpu, ListTodo, Clapperboard, Share2 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
-import { useAuth } from "@clerk/nextjs";
-import type { ChatMessage, ChatResponse, WikiPage } from "@/lib/types";
+import type { WikiPage, Message } from "@/lib/types";
 import ToolOutput from "@/components/ToolOutput";
-
-import { BASE as API_BASE_URL } from "@/lib/api";
 
 interface ActionChatProps {
   sessionId: string | null;
   wikiPages: WikiPage[];
-  initialMessages?: Message[];
-  onMessagesChange?: (messages: Message[]) => void;
-}
-
-type Message = ChatMessage & {
-  toolUsed?: string | null;
-  toolOutput?: unknown;
-  isWebAugmented?: boolean;
-};
-
-// ── Timeout-aware fetch wrapper ───────────────────────────────────────────────
-async function chatWithTimeout(
-  sessionId: string,
-  message: string,
-  history: ChatMessage[],
-  token: string | null,
-  timeoutMs = 30_000
-): Promise<ChatResponse> {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
-
-  try {
-    const res = await fetch(`${API_BASE_URL}/chat`, {
-      method: "POST",
-      headers: { 
-        "Content-Type": "application/json",
-        ...(token ? { Authorization: `Bearer ${token}` } : {}),
-      },
-      body: JSON.stringify({ session_id: sessionId, message, history }),
-      signal: controller.signal,
-    });
-    clearTimeout(timer);
-    if (!res.ok) {
-      const text = await res.text().catch(() => "");
-      console.error("Backend error response:", text);
-      let detail = `Server error ${res.status}`;
-      try {
-        const d = JSON.parse(text);
-        if (d.detail) detail = d.detail;
-      } catch (e) {}
-      throw new Error(detail);
-    }
-    return res.json();
-  } catch (e: unknown) {
-    clearTimeout(timer);
-    if (e instanceof DOMException && e.name === "AbortError")
-      throw new Error("Request timed out after 30 seconds. The agent may still be processing.");
-    throw e;
-  }
+  messages: Message[];
+  loading: boolean;
+  sendMessage: (text: string) => Promise<void>;
 }
 
 // ── Quick-action palette config ───────────────────────────────────────────────
@@ -75,25 +25,8 @@ const ACTIONS = [
 ] as const;
 
 // ─────────────────────────────────────────────────────────────────────────────
-export default function ActionChat({ sessionId, wikiPages, initialMessages = [], onMessagesChange }: ActionChatProps) {
-  const { getToken } = useAuth();
-  const [messages, setMessages] = useState<Message[]>(initialMessages);
+export default function ActionChat({ sessionId, messages, loading, sendMessage }: ActionChatProps) {
   const [input, setInput] = useState("");
-  
-  // Sync when notebook/session changes
-  useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-    setMessages(initialMessages);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sessionId]);
-
-  // Sync state up to parent for persistence
-  useEffect(() => {
-    if (onMessagesChange) {
-      onMessagesChange(messages);
-    }
-  }, [messages, onMessagesChange]);
-  const [loading, setLoading] = useState(false);
   const bottomRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
@@ -102,88 +35,18 @@ export default function ActionChat({ sessionId, wikiPages, initialMessages = [],
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages, loading]);
 
-  // Welcome message when session ready
-  useEffect(() => {
-    if (sessionId && wikiPages.length > 0 && messages.length === 0) {
-      // eslint-disable-next-line react-hooks/set-state-in-effect
-      setMessages([
-        {
-          role: "assistant",
-          content: `✨ Knowledge base ready — ${wikiPages.length} topics synthesised.\n\nUse the quick actions below or ask me anything about your document.`,
-        },
-      ]);
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sessionId, wikiPages.length]);
-
-  const sendMessage = async (text: string) => {
+  const handleSend = async (text: string) => {
     if (!text.trim() || !sessionId || loading) return;
-    const userMsg = text.trim();
+    const toSend = text.trim();
     setInput("");
     if (textareaRef.current) textareaRef.current.style.height = "auto";
-
-    const history: ChatMessage[] = messages.map((m) => {
-      if (m.toolUsed && m.toolOutput) {
-        const summary = typeof m.toolOutput === 'string' 
-          ? m.toolOutput 
-          : JSON.stringify(m.toolOutput);
-        return { 
-          role: m.role, 
-          content: `${m.content}\n\n[Tool Result (${m.toolUsed}): ${summary}]` 
-        };
-      }
-      return { role: m.role, content: m.content };
-    });
-
-    setMessages((prev) => [...prev, { role: "user", content: userMsg }]);
-    setLoading(true);
-
-    // Show a toast if it's taking long
-    const slowToastId = setTimeout(
-      () => toast.loading("The agent is thinking hard… this may take a moment.", { id: "slow-toast" }),
-      8_000
-    );
-
-    try {
-      const token = await getToken();
-      const res = await chatWithTimeout(sessionId, userMsg, history, token);
-      clearTimeout(slowToastId);
-      toast.dismiss("slow-toast");
-
-      setMessages((prev) => [
-        ...prev,
-        {
-          role: "assistant",
-          content: res.response,
-          toolUsed: res.tool_used,
-          toolOutput: res.tool_output,
-          isWebAugmented: res.is_web_augmented,
-        },
-      ]);
-
-      if (res.is_web_augmented) {
-        toast.info("Answer sourced from live web search", { icon: "🌐" });
-      }
-    } catch (e: unknown) {
-      clearTimeout(slowToastId);
-      toast.dismiss("slow-toast");
-
-      const msg = e instanceof Error ? e.message : "Something went wrong.";
-      toast.error(msg, { duration: 6000 });
-
-      setMessages((prev) => [
-        ...prev,
-        { role: "assistant", content: `⚠️ ${msg}` },
-      ]);
-    } finally {
-      setLoading(false);
-    }
+    await sendMessage(toSend);
   };
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
-      sendMessage(input);
+      handleSend(input);
     }
   };
 
@@ -266,7 +129,7 @@ export default function ActionChat({ sessionId, wikiPages, initialMessages = [],
                     if (Array.isArray(parsed) && parsed.length > 0 && "task" in parsed[0]) {
                       return <ToolOutput toolName="extract_action_items" output={parsed} />;
                     }
-                  } catch (e) {}
+                  } catch {}
                   return cleaned;
                 })()}
               </div>
@@ -310,7 +173,7 @@ export default function ActionChat({ sessionId, wikiPages, initialMessages = [],
             <button
               key={label}
               disabled={disabled || loading}
-              onClick={() => sendMessage(prompt)}
+              onClick={() => handleSend(prompt)}
               className="action-pill"
             >
               <Icon className="w-3 h-3" style={{ color }} />
@@ -344,7 +207,7 @@ export default function ActionChat({ sessionId, wikiPages, initialMessages = [],
             style={{ maxHeight: "120px" }}
           />
           <button
-            onClick={() => sendMessage(input)}
+            onClick={() => handleSend(input)}
             disabled={disabled || loading || !input.trim()}
             className="w-8 h-8 rounded-lg flex items-center justify-center shrink-0
               bg-[#7c3aed] hover:bg-[#6d28d9] disabled:opacity-30

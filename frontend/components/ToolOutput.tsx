@@ -26,7 +26,10 @@ import {
   Sparkles,
   Trophy,
   Activity,
-  Maximize2
+  Maximize2,
+  Brain,
+  Bot,
+  Cpu
 } from "lucide-react";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -1075,7 +1078,228 @@ function WebSearchResult({ output }: { output: unknown }) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// 8. RENDERER REGISTRY
+// 8. MULTI-AGENT ORCHESTRATION VISUALIZER
+// ─────────────────────────────────────────────────────────────────────────────
+interface SpawnedAgent {
+  name: string;
+  role: string;
+  status: string;
+  icon?: string;
+}
+
+interface SwarmOutput {
+  orchestrator_plan: string;
+  agents_created: SpawnedAgent[];
+  sub_outputs: Record<string, unknown>;
+}
+
+function MultiAgentOrchestrator({ output }: { output: SwarmOutput }) {
+  const [activeTab, setActiveTab] = useState<string>("");
+
+  const spawned = output.agents_created || [];
+  const plan = output.orchestrator_plan || "";
+  const subOutputs = output.sub_outputs || {};
+
+  // Set default tab to the first key of sub_outputs
+  useEffect(() => {
+    const keys = Object.keys(subOutputs);
+    if (keys.length > 0 && !activeTab) {
+      setActiveTab(keys[0]);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeTab]);
+
+  const getAgentIcon = (name: string) => {
+    switch (name) {
+      case "ResearchAgent":
+        return <Sparkles className="w-4 h-4 text-indigo-400" />;
+      case "StudyAgent":
+        return <BookOpen className="w-4 h-4 text-pink-400" />;
+      case "DevOpsAgent":
+        return <Database className="w-4 h-4 text-emerald-400" />;
+      case "CreatorAgent":
+        return <Play className="w-4 h-4 text-amber-400 fill-current" />;
+      case "DocumentAgent":
+        return <Server className="w-4 h-4 text-cyan-400" />;
+      default:
+        return <Cpu className="w-4 h-4 text-blue-400" />;
+    }
+  };
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const getSubRenderer = (key: string, data: any) => {
+    switch (key) {
+      case "generate_flashcards":
+        return <FlashcardDeck cards={data} />;
+      case "architecture_assist":
+        return <ArchCard data={data} />;
+      case "extract_action_items":
+        return <ActionList items={data} />;
+      case "generate_creator_script":
+        return <CreatorScript data={data} />;
+      case "generate_tweet_thread":
+        return <TwitterThread thread={data} />;
+      case "generate_obsidian_markdown":
+        return <ObsidianNote data={data} />;
+      case "live_web_search":
+        return <WebSearchResult output={data} />;
+      default:
+        return (
+          <pre className="text-xs text-slate-400 bg-white/5 rounded-xl p-3 overflow-x-auto mt-2 border border-white/8">
+            {JSON.stringify(data, null, 2)}
+          </pre>
+        );
+    }
+  };
+
+  const getTabLabel = (key: string) => {
+    switch (key) {
+      case "generate_flashcards":
+        return "Flashcards";
+      case "architecture_assist":
+        return "Architecture spec";
+      case "extract_action_items":
+        return "Sprint Board";
+      case "generate_creator_script":
+        return "Video Script";
+      case "generate_tweet_thread":
+        return "Twitter Ghostwrite";
+      case "generate_obsidian_markdown":
+        return "Obsidian note";
+      case "live_web_search":
+        return "Web verification";
+      default:
+        return key.replace(/_/g, " ");
+    }
+  };
+
+  return (
+    <div className="mt-4 space-y-5 animate-in fade-in duration-500">
+      
+      {/* 1. Tactical plan box */}
+      <div className="p-4 rounded-3xl bg-[#7c3aed]/5 border border-[#7c3aed]/20 relative overflow-hidden shrink-0">
+        <div className="absolute top-0 right-0 p-4 opacity-5 pointer-events-none">
+          <Brain className="w-24 h-24 text-white" />
+        </div>
+        <div className="relative z-10 flex items-start gap-3">
+          <div className="w-7 h-7 rounded-lg bg-[#7c3aed]/20 border border-[#7c3aed]/40 flex items-center justify-center shrink-0">
+            <Brain className="w-4 h-4 text-[#a78bfa]" />
+          </div>
+          <div>
+            <span className="text-[9px] font-mono text-[#a78bfa] tracking-[0.2em] font-bold uppercase block mb-1">
+              Tactical Swarm Plan
+            </span>
+            <p className="text-xs sm:text-sm text-slate-200 leading-relaxed font-sans">{plan}</p>
+          </div>
+        </div>
+      </div>
+
+      {/* 2. Hierarchical Swarm Canvas blueprint */}
+      <div className="p-6 rounded-[2rem] bg-gradient-to-b from-[#0a0a0f] to-[#040407] border border-white/5 relative overflow-hidden flex flex-col items-center justify-center">
+        
+        {/* Subtle grid background */}
+        <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_center,rgba(124,58,237,0.04),transparent)]" />
+        <div className="absolute inset-0 bg-[radial-gradient(rgba(255,255,255,0.015)_1px,transparent_1px)] bg-[size:16px_16px] pointer-events-none" />
+
+        <div className="relative z-10 w-full flex flex-col items-center gap-6">
+          
+          {/* Master Orchestration Director Node */}
+          <div className="flex flex-col items-center relative">
+            <div className="w-44 p-3 rounded-2xl bg-gradient-to-tr from-[#7c3aed]/20 to-[#4f46e5]/10 border border-[#7c3aed]/55 text-center shadow-[0_0_20px_rgba(124,58,237,0.25)] relative select-none">
+              <div className="absolute -inset-[1.5px] rounded-2xl border border-indigo-400/40 animate-ping opacity-60 pointer-events-none" />
+              <span className="text-[8px] font-mono text-[#a78bfa] tracking-widest uppercase font-bold">Director</span>
+              <p className="text-xs font-bold text-white mt-1.5 flex items-center justify-center gap-1.5">
+                <Brain className="w-3.5 h-3.5 text-indigo-400" />
+                Orchestration Agent
+              </p>
+            </div>
+            
+            {/* Main vertical connector drop down */}
+            {spawned.length > 0 && (
+              <div className="w-[1.5px] h-6 bg-gradient-to-b from-[#7c3aed] to-indigo-500/40 mt-1" />
+            )}
+          </div>
+
+          {/* Sub-agents spawned dynamically */}
+          {spawned.length > 0 && (
+            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4 w-full max-w-2xl px-2">
+              {spawned.map((agent, i) => (
+                <div 
+                  key={i}
+                  className="p-3.5 rounded-2xl bg-[#111118]/85 border border-white/5 hover:border-indigo-500/40 hover:shadow-[0_0_12px_rgba(99,102,241,0.1)] transition-all duration-300 relative overflow-hidden flex items-center gap-3"
+                >
+                  <div className="absolute top-0 right-0 p-3 opacity-3 pointer-events-none">
+                    <Bot className="w-12 h-12 text-white" />
+                  </div>
+                  
+                  {/* Icon badge */}
+                  <div className="w-8 h-8 rounded-lg bg-white/5 border border-white/10 flex items-center justify-center shrink-0">
+                    {getAgentIcon(agent.name)}
+                  </div>
+                  
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center gap-1.5">
+                      <span className="text-[9px] font-mono font-bold text-slate-500 uppercase tracking-wide truncate">
+                        {agent.name}
+                      </span>
+                      <span className="px-1.5 py-0.5 rounded bg-emerald-500/10 border border-emerald-500/30 text-[7px] font-mono font-bold text-emerald-400 uppercase tracking-wider shrink-0">
+                        {agent.status}
+                      </span>
+                    </div>
+                    <p className="text-[10px] font-bold text-white truncate mt-0.5">{agent.role}</p>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+
+        </div>
+      </div>
+
+      {/* 3. Output Tabs View */}
+      {Object.keys(subOutputs).length > 0 && (
+        <div className="space-y-3 shrink-0">
+          <div className="flex items-center gap-2 px-1">
+            <span className="text-[10px] font-mono text-slate-500 uppercase tracking-wider">
+              Explore Dynamic Swarm Artifacts
+            </span>
+          </div>
+
+          {/* Custom Tabs Slider bar */}
+          <div className="flex flex-wrap bg-white/5 border border-white/8 p-0.5 rounded-2xl gap-0.5 select-none">
+            {Object.keys(subOutputs).map((key) => {
+              const isActive = activeTab === key;
+              return (
+                <button
+                  key={key}
+                  onClick={() => setActiveTab(key)}
+                  className={`px-4 py-2 text-[10px] sm:text-xs font-semibold rounded-xl transition-all duration-200 uppercase tracking-wider truncate flex-1 ${
+                    isActive
+                      ? "bg-white/10 text-white shadow-lg border border-white/5 font-bold"
+                      : "text-slate-500 hover:text-slate-300 hover:bg-white/5"
+                  }`}
+                >
+                  {getTabLabel(key)}
+                </button>
+              );
+            })}
+          </div>
+
+          {/* Active Tab rendering */}
+          {activeTab && subOutputs[activeTab] && (
+            <div className="animate-in zoom-in-98 duration-300">
+              {getSubRenderer(activeTab, subOutputs[activeTab])}
+            </div>
+          )}
+        </div>
+      )}
+
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 9. RENDERER REGISTRY
 // ─────────────────────────────────────────────────────────────────────────────
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const RENDERERS: Record<string, (output: any) => React.ReactNode> = {
@@ -1087,6 +1311,7 @@ const RENDERERS: Record<string, (output: any) => React.ReactNode> = {
   generate_obsidian_markdown: (output) => <ObsidianNote data={output} />,
   live_web_search: (output) => <WebSearchResult output={output} />,
   duckduckgo_search: (output) => <WebSearchResult output={output} />,
+  multi_agent_orchestration: (output) => <MultiAgentOrchestrator output={output} />,
 };
 
 // ─────────────────────────────────────────────────────────────────────────────

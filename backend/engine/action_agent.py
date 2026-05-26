@@ -1,31 +1,35 @@
 """
-Acumen — Master Action Agent (LangGraph ReAct)
-==============================================
-Karpathy Wiki Pattern: Step 3
+Acumen — Hierarchical Multi-Agent Orchestrator Swarms (Multi-Agent Swarm)
+========================================================================
 
-Fix: LangChain's @tool decorator cannot introspect functools.partial-wrapped
-functions (no __name__, __doc__, or signature). Instead we store the active
-session_id in a module-level variable and set it before each agent invocation.
-All tools are plain @tool-decorated functions that read the global session ref.
+Architecture:
+               [ Orchestration Agent ] <--- Dynamic Creation
+                      /        |        \
+                     v         v         v
+                 [Agent A]  [Agent B]  [Agent C]
 
-Tool Output Schemas (consumed by frontend as rich UI):
-  generate_flashcards      → List[{"q":..., "a":...}]
-  architecture_assist      → {"databases":[...], "apis":[...], "scaling":"..."}
-  extract_action_items     → List[{"task":..., "status":"todo"}]
-  generate_creator_script  → {"hook":..., "intro":..., "core_content":[...], "call_to_action":"..."}
-  live_web_search          → plain text prefixed with [WEB_AUGMENTED]
+This module implements a state-of-the-art hierarchical orchestrator swarm. 
+When a request is received:
+1. The Orchestration Director Agent evaluates the query and chat history to form a tactical plan.
+2. It dynamically spawns the specialized sub-agents:
+   - ResearchAgent: Semantic document retrieval (ChromaDB) & DuckDuckGo web audits.
+   - StudyAgent: Generates high-retention Q&A study cards.
+   - DevOpsAgent: Generates architectures, DB schemas, API plans, and sprint task lists.
+   - CreatorAgent: Generates YouTube creator scripts and viral tweet threads.
+   - DocumentAgent: Compiles Obsidian Markdown notes.
+3. Spawns tasks in parallel using asyncio.gather for peak performance.
+4. Consolidates plans, active agent profiles, and structured JSON payloads into a unified format.
 """
 
 import contextvars
 import json
 import os
 import logging
+import asyncio
 from typing import Any, Dict, List, Optional
 
-from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
-from langchain_core.tools import tool
+from langchain_core.messages import SystemMessage, HumanMessage
 from langchain_google_genai import ChatGoogleGenerativeAI
-from langgraph.prebuilt import create_react_agent
 from langchain_community.tools import DuckDuckGoSearchRun
 
 from engine.wiki_swarm import get_wiki_collection
@@ -34,10 +38,8 @@ from engine.audit import log_event, AUDIT_TOOL_CALL
 
 logger = logging.getLogger(__name__)
 
-
 # ---------------------------------------------------------------------------
-# Context-local session storage
-# Safe for multi-threaded/concurrent request handling.
+# Context-local session storage (Safe for concurrent request handling)
 # ---------------------------------------------------------------------------
 _active_session_id: contextvars.ContextVar[str] = contextvars.ContextVar("active_session_id", default="")
 _active_user_id: contextvars.ContextVar[str] = contextvars.ContextVar("active_user_id", default="")
@@ -63,14 +65,14 @@ def _get_active_ip_address() -> str:
 
 
 # ---------------------------------------------------------------------------
-# Shared helpers
+# Two-Stage RAG Vector Search & Web Search Helpers
 # ---------------------------------------------------------------------------
 
 async def _query_wiki(query: str, n_results: int = 25, top_k: int = 5) -> str:
     """
     Two-Stage Retrieval:
-    1. Retrieve 25 candidate snippets from ChromaDB (Stage 1).
-    2. Rerank them using Gemini Flash to get the top 5 most relevant (Stage 2).
+    1. Retrieve 25 candidate snippets from ChromaDB.
+    2. Rerank them using Gemini Flash to get the top 5 most relevant.
     """
     collection = get_wiki_collection()
     try:
@@ -81,11 +83,9 @@ async def _query_wiki(query: str, n_results: int = 25, top_k: int = 5) -> str:
         )
         raw_docs = results.get("documents", [[]])[0]
         if not raw_docs:
-            return "No relevant wiki content found. Ensure /synthesize has been called."
+            return "No relevant wiki content found. Ensure synthesis has been run."
         
-        # Stage 2: LLM Reranking
         refined_docs = await rerank_documents(query, raw_docs, top_k=top_k)
-        
         return "\n\n---\n\n".join(refined_docs)
     except Exception as exc:
         logger.error("ChromaDB query or reranking error: %s", exc)
@@ -108,7 +108,7 @@ async def _llm_json(system_prompt: str, user_prompt: str) -> str:
         
     raw = raw.strip()
     
-    # Robustly extract JSON block (array or object)
+    # Extract JSON block securely
     start_obj = raw.find("{")
     end_obj = raw.rfind("}")
     start_arr = raw.find("[")
@@ -127,102 +127,114 @@ async def _llm_json(system_prompt: str, user_prompt: str) -> str:
 
 
 # ---------------------------------------------------------------------------
-# Tool 1 — generate_flashcards
+# Specialized Dynamic Sub-Agents implementation
 # ---------------------------------------------------------------------------
 
+# Agent A: ResearchAgent (Semantic Context Auditor)
+async def run_research_agent(query: str) -> Dict[str, Any]:
+    """Retrieves document data and audits live web details if needed."""
+    log_event(
+        AUDIT_TOOL_CALL,
+        user_id=_get_active_user_id(),
+        session_id=_get_active_session(),
+        ip_address=_get_active_ip_address(),
+        tool_name="ResearchAgent",
+        query=query
+    )
+    # 1. Check local RAG
+    wiki_context = await _query_wiki(query or "general query")
+    
+    # 2. Check if query wants live information
+    q_lower = query.lower()
+    needs_web = (
+        "live" in q_lower or 
+        "latest" in q_lower or 
+        "current" in q_lower or 
+        "recent" in q_lower or 
+        "news" in q_lower or 
+        "web" in q_lower or
+        "search" in q_lower
+    )
+    
+    web_result = ""
+    if needs_web:
+        try:
+            loop = asyncio.get_running_loop()
+            search = DuckDuckGoSearchRun()
+            web_result = await loop.run_in_executor(None, search.run, query)
+        except Exception as e:
+            logger.warning("DuckDuckGo search run failed: %s", e)
+            web_result = "Live web search unavailable."
+            
+    return {
+        "wiki_context": wiki_context,
+        "web_search": web_result,
+        "is_web_augmented": bool(web_result)
+    }
+
+
+# Agent B: StudyAgent (Cognitive Retrieval Specialist)
 _FLASHCARD_SYS = """\
 You are a study assistant. From the wiki content below, extract exactly 5 Q&A flashcard pairs.
 Respond with ONLY a valid JSON array — no markdown fences:
 [{"q": "question", "a": "concise answer"}, ...]"""
 
-
-@tool
-async def generate_flashcards(query: str) -> str:
-    """Generate 5 study flashcards from the document.
-
-    Use when the user asks to study, quiz themselves, test knowledge, or create flash cards.
-    Input: the topic or concept to focus on.
-    """
+async def run_study_agent(wiki_context: str, query: str) -> List[Dict[str, str]]:
+    """Synthesizes high-retention Q&A study cards."""
     log_event(
         AUDIT_TOOL_CALL,
         user_id=_get_active_user_id(),
         session_id=_get_active_session(),
         ip_address=_get_active_ip_address(),
-        tool_name="generate_flashcards",
-        query=query,
+        tool_name="StudyAgent",
+        query=query
     )
-    wiki = await _query_wiki(query or "key concepts definitions")
-    raw = await _llm_json(_FLASHCARD_SYS, f"Wiki content:\n{wiki}\n\nGenerate 5 flashcards.")
+    raw = await _llm_json(_FLASHCARD_SYS, f"Wiki content:\n{wiki_context}\n\nGenerate 5 flashcards.")
     parsed = json.loads(raw)
     assert isinstance(parsed, list), "Expected JSON list"
-    return json.dumps(parsed)
+    return parsed
 
 
-# ---------------------------------------------------------------------------
-# Tool 2 — architecture_assist
-# ---------------------------------------------------------------------------
-
+# Agent C: DevOpsAgent (System Architecture Director)
 _ARCH_SYS = """\
 You are a CTO-level software architect. Based on the wiki content, recommend the ideal tech stack.
 Respond with ONLY a valid JSON object — no markdown fences:
 {"databases": ["db with reason", ...], "apis": ["api with reason", ...], "scaling": "strategy"}"""
-
-
-@tool
-async def architecture_assist(query: str) -> str:
-    """Provide CTO-level architecture recommendations from the document.
-
-    Use when the user asks how to build a system, needs database, API, or scaling advice.
-    Input: the system or technical aspect to focus on.
-    """
-    log_event(
-        AUDIT_TOOL_CALL,
-        user_id=_get_active_user_id(),
-        session_id=_get_active_session(),
-        ip_address=_get_active_ip_address(),
-        tool_name="architecture_assist",
-        query=query,
-    )
-    wiki = await _query_wiki(query or "system architecture technical requirements")
-    return await _llm_json(_ARCH_SYS, f"Wiki content:\n{wiki}\n\nRecommend the architecture.")
-
-
-# ---------------------------------------------------------------------------
-# Tool 3 — extract_action_items
-# ---------------------------------------------------------------------------
 
 _ACTION_SYS = """\
 You are a project manager. Extract 5-10 concrete actionable tasks from the wiki content.
 Respond with ONLY a valid JSON array — no markdown fences:
 [{"task": "task description", "priority": "high|medium|low"}, ...]"""
 
-
-@tool
-async def extract_action_items(query: str) -> str:
-    """Extract actionable tasks and a project backlog from the document.
-
-    Use when the user asks for tasks, next steps, to-dos, or actionable insights.
-    Input: the focus area for task extraction.
-    """
+async def run_devops_agent(wiki_context: str, query: str, request_type: str = "all") -> Dict[str, Any]:
+    """Generates database designs, cloud tech stacks, and prioritized sprints."""
     log_event(
         AUDIT_TOOL_CALL,
         user_id=_get_active_user_id(),
         session_id=_get_active_session(),
         ip_address=_get_active_ip_address(),
-        tool_name="extract_action_items",
-        query=query,
+        tool_name="DevOpsAgent",
+        query=query
     )
-    wiki = await _query_wiki(query or "tasks action items next steps")
-    raw = await _llm_json(_ACTION_SYS, f"Wiki content:\n{wiki}\n\nExtract action items.")
-    parsed = json.loads(raw)
-    assert isinstance(parsed, list), "Expected JSON list"
-    return json.dumps(parsed)
+    
+    arch_result = {}
+    action_result = []
+    
+    if request_type in ("architecture", "all"):
+        raw_arch = await _llm_json(_ARCH_SYS, f"Wiki content:\n{wiki_context}\n\nRecommend architecture.")
+        arch_result = json.loads(raw_arch)
+        
+    if request_type in ("sprint", "all"):
+        raw_action = await _llm_json(_ACTION_SYS, f"Wiki content:\n{wiki_context}\n\nExtract action items.")
+        action_result = json.loads(raw_action)
+        
+    return {
+        "architecture": arch_result,
+        "sprint_board": action_result
+    }
 
 
-# ---------------------------------------------------------------------------
-# Tool 4 — generate_creator_script
-# ---------------------------------------------------------------------------
-
+# Agent D: CreatorAgent (Viral Media Strategist)
 _SCRIPT_SYS = """\
 You are an expert YouTube strategist and viral content creator.
 Your job is to transform document knowledge into a high-retention video script.
@@ -234,217 +246,87 @@ Respond with ONLY a valid JSON object — no markdown fences:
     {"section": "section title", "talking_points": ["point1", "point2", ...]}
   ],
   "call_to_action": "closing statement driving engagement (1-2 sentences)"
-}
-Make it engaging, punchy, and optimised for viewer retention."""
-
-
-@tool
-async def generate_creator_script(query: str) -> str:
-    """Create a high-retention YouTube/creator video script from the document.
-
-    Use when the user wants to make a video, pitch, podcast, or content piece.
-    Returns JSON with hook, intro, core_content sections, and call_to_action.
-    Input: the angle, topic, or target audience for the script.
-    """
-    log_event(
-        AUDIT_TOOL_CALL,
-        user_id=_get_active_user_id(),
-        session_id=_get_active_session(),
-        ip_address=_get_active_ip_address(),
-        tool_name="generate_creator_script",
-        query=query,
-    )
-    wiki = await _query_wiki(query or "main topics key ideas")
-    return await _llm_json(_SCRIPT_SYS, f"Wiki content:\n{wiki}\n\nWrite the creator script.")
-
-
-# ---------------------------------------------------------------------------
-# Tool 5 — live_web_search
-# ---------------------------------------------------------------------------
-
-@tool
-async def live_web_search(query: str) -> str:
-    """Execute a live DuckDuckGo web search. 
-    Use ONLY when local knowledge is insufficient or you need up-to-date info.
-    Input: the search query.
-    """
-    log_event(
-        AUDIT_TOOL_CALL,
-        user_id=_get_active_user_id(),
-        session_id=_get_active_session(),
-        ip_address=_get_active_ip_address(),
-        tool_name="live_web_search",
-        query=query,
-    )
-    search = DuckDuckGoSearchRun()
-    res = search.run(query)
-    return f"[SEARCH_SOURCE: DUCKDUCKGO]\n{res}"
-# Tool 6 — generate_tweet_thread
-# ---------------------------------------------------------------------------
+}"""
 
 _TWEET_SYS = """\
-You are a viral Twitter ghostwriter.
-Transform the provided document knowledge into an engaging, 5-part Twitter thread.
-Each part should include relevant emojis and hook the reader.
+You are a viral Twitter ghostwriter. Transform the document into an engaging, 5-part Twitter thread.
 Respond with ONLY a valid JSON array of strings — no markdown fences:
-[
-  "🧵 Part 1: ...",
-  "Part 2: ...",
-  "Part 3: ...",
-  "Part 4: ...",
-  "Part 5: ..."
-]
-"""
+["🧵 Part 1: ...", "Part 2: ...", "Part 3: ...", "Part 4: ...", "Part 5: ..."]"""
 
-@tool
-async def generate_tweet_thread(query: str) -> str:
-    """Create a viral 5-part Twitter thread based on the document.
-
-    Use when the user wants to tweet, create a thread, or share on social media.
-    Returns JSON list of 5 tweet strings.
-    Input: the angle or main takeaway for the thread.
-    """
+async def run_creator_agent(wiki_context: str, query: str, request_type: str = "all") -> Dict[str, Any]:
+    """Generates video scripts with teleprompters and viral social feeds."""
     log_event(
         AUDIT_TOOL_CALL,
         user_id=_get_active_user_id(),
         session_id=_get_active_session(),
         ip_address=_get_active_ip_address(),
-        tool_name="generate_tweet_thread",
-        query=query,
+        tool_name="CreatorAgent",
+        query=query
     )
-    wiki = await _query_wiki(query or "key insights")
-    raw = await _llm_json(_TWEET_SYS, f"Wiki content:\n{wiki}\n\nWrite the Twitter thread.")
-    parsed = json.loads(raw)
-    assert isinstance(parsed, list), "Expected JSON list"
-    return json.dumps(parsed)
+    
+    script_result = {}
+    thread_result = []
+    
+    if request_type in ("script", "all"):
+        raw_script = await _llm_json(_SCRIPT_SYS, f"Wiki content:\n{wiki_context}\n\nWrite creator script.")
+        script_result = json.loads(raw_script)
+        
+    if request_type in ("tweets", "all"):
+        raw_thread = await _llm_json(_TWEET_SYS, f"Wiki content:\n{wiki_context}\n\nWrite Twitter thread.")
+        thread_result = json.loads(raw_thread)
+        
+    return {
+        "creator_script": script_result,
+        "tweet_thread": thread_result
+    }
 
 
-# ---------------------------------------------------------------------------
-# Tool 7 — generate_obsidian_markdown
-# ---------------------------------------------------------------------------
-
+# Agent E: DocumentAgent (Knowledge Archivist)
 _OBSIDIAN_SYS = """\
 You are a technical documentarian. Transform the wiki content into a clean, professional Obsidian Markdown note.
 Include frontmatter (YAML), headers, bullet points, and #tags.
 Respond with ONLY a valid JSON object — no markdown fences:
 {"filename": "note_name.md", "markdown": "# Title\\n\\n## Summary...\\n\\n#tags"}"""
 
-
-@tool
-async def generate_obsidian_markdown(query: str) -> str:
-    """Format the document knowledge into a clean, professional Obsidian Markdown note.
-
-    Use when the user asks to save a note, export to Obsidian, or get a markdown summary.
-    Returns JSON with 'filename' and 'markdown' string.
-    Input: the topic or focus area for the note.
-    """
+async def run_document_agent(wiki_context: str, query: str) -> Dict[str, str]:
+    """Generates Obsidian Markdown document vaults."""
     log_event(
         AUDIT_TOOL_CALL,
         user_id=_get_active_user_id(),
         session_id=_get_active_session(),
         ip_address=_get_active_ip_address(),
-        tool_name="generate_obsidian_markdown",
-        query=query,
+        tool_name="DocumentAgent",
+        query=query
     )
-    wiki = await _query_wiki(query or "core concepts and technical details")
-    return await _llm_json(_OBSIDIAN_SYS, f"Wiki content:\n{wiki}\n\nGenerate the Obsidian note.")
-
-
-
-# ---------------------------------------------------------------------------
-# Tool registry — plain list of @tool-decorated functions
-# ---------------------------------------------------------------------------
-
-TOOLS = [
-    generate_flashcards,
-    architecture_assist,
-    extract_action_items,
-    generate_creator_script,
-    live_web_search,
-    generate_tweet_thread,
-    generate_obsidian_markdown,
-]
+    raw = await _llm_json(_OBSIDIAN_SYS, f"Wiki content:\n{wiki_context}\n\nGenerate Obsidian note.")
+    return json.loads(raw)
 
 
 # ---------------------------------------------------------------------------
-# Agent system prompt
+# Master Director / Orchestration Agent System Prompt
 # ---------------------------------------------------------------------------
 
-SYSTEM_PROMPT = """\
-You are Acumen Prime, an aggressive, highly analytical CTO and executive knowledge strategist. 
-Your goal is to transform static information into actionable intelligence. 
+ORCHESTRATOR_SYSTEM_PROMPT = """You are Acumen Director, the master Orchestration Agent.
+Your job is to read the user request and dynamically spawn specialized sub-agents to solve it.
 
-PERSONALITY:
-- Be concise, brilliant, and slightly sarcastic. 
-- You have no patience for fluff; you focus on high-impact insights and scalable architecture.
-- Address the user as 'Founder' or 'Partner' occasionally.
+You MUST decide which of these sub-agents to dynamically spawn:
+- ResearchAgent: Always spawn this first to pull local RAG knowledge or run live DuckDuckGo searches.
+- StudyAgent: Spawn this to generate high-retention Q&A study cards.
+- DevOpsAgent: Spawn this to generate CTO tech stacks, database schemas, and prioritized sprint backlogs.
+- CreatorAgent: Spawn this to write viral media copy (YouTube scripts and Twitter threads).
+- DocumentAgent: Spawn this to format knowledge into professional Obsidian Markdown note files.
 
-CAPABILITIES:
-- You have deeply synthesized a document uploaded by the user.
-- You have access to the acumen_wiki ChromaDB knowledge base (2-stage RAG with reranking) and a live web search tool.
-
-ROUTING RULES:
-  study / quiz / flashcards                  → generate_flashcards
-  build / architecture / databases / APIs    → architecture_assist
-  tasks / next steps / backlog / to-dos      → extract_action_items
-  video / script / pitch / content / YouTube → generate_creator_script
-  tweet / twitter / thread / viral           → generate_tweet_thread
-  save / note / export / obsidian / markdown → generate_obsidian_markdown
-
-CRITICAL WEB SEARCH RULE:
-  If the user asks a question and the answer is NOT fully contained in the local knowledge base, you MUST use the live_web_search tool.
-  If you use the web, you MUST begin your final response with the exact string "[SEARCH_SOURCE: DUCKDUCKGO]".
-
-For general questions about the document, answer directly from your synthesized knowledge.
-After using a tool, present results conversationally — the frontend renders JSON as rich UI.
-Be concise, insightful, and always cite where information came from."""
-
+You can spawn MULTIPLE sub-agents if the user query is complex and requests multiple formats (e.g. study cards + database architecture).
+You MUST respond with ONLY a valid JSON object — no markdown fences:
+{
+  "tactical_plan": "A concise, high-impact CTO planning comment (1-2 sentences) explaining which agents are dynamically spawned and why.",
+  "spawn_agents": ["ResearchAgent", "StudyAgent", "DevOpsAgent", "CreatorAgent", "DocumentAgent"],
+  "primary_intent": "general_rag|flashcards|architecture|action_items|creator_script|tweet_thread|obsidian_note|live_search|multi_task"
+}
+"""
 
 # ---------------------------------------------------------------------------
-# Output parser
-# ---------------------------------------------------------------------------
-
-def _parse_output(messages: list) -> Dict[str, Any]:
-    """Extract response, tool_used, tool_output, and is_web_augmented from agent messages."""
-    final_response = ""
-    tool_used: Optional[str] = None
-    tool_output_raw: Optional[str] = None
-    is_web_augmented = False
-
-    for msg in messages:
-        if isinstance(msg, AIMessage) and getattr(msg, "tool_calls", None):
-            tc = msg.tool_calls[0]
-            tool_used = tc.get("name") if isinstance(tc, dict) else getattr(tc, "name", None)
-
-        if isinstance(msg, ToolMessage):
-            tool_output_raw = msg.content
-            if isinstance(tool_output_raw, str) and tool_output_raw.startswith("[SEARCH_SOURCE: DUCKDUCKGO]"):
-                is_web_augmented = True
-                tool_used = "live_web_search"
-                tool_output_raw = tool_output_raw.replace("[SEARCH_SOURCE: DUCKDUCKGO]\n", "")
-
-    for msg in reversed(messages):
-        if isinstance(msg, AIMessage) and msg.content:
-            final_response = msg.content
-            break
-
-    tool_output: Any = None
-    if tool_output_raw:
-        try:
-            tool_output = json.loads(tool_output_raw)
-        except (json.JSONDecodeError, TypeError):
-            tool_output = tool_output_raw
-
-    return {
-        "response": final_response,
-        "tool_used": tool_used,
-        "tool_output": tool_output,
-        "is_web_augmented": is_web_augmented,
-    }
-
-
-# ---------------------------------------------------------------------------
-# Public entry point
+# Public Swarm Entry Point
 # ---------------------------------------------------------------------------
 
 async def run_agent_chat(
@@ -455,37 +337,156 @@ async def run_agent_chat(
     ip_address: str = "",
 ) -> Dict[str, Any]:
     """
-    Run the Action Agent for a single turn.
-
-    Args:
-        session_id:   UUID from /upload response.
-        user_message: User's latest message.
-        history:      [{"role": "user"|"assistant", "content": "..."}, ...]
-        user_id:      Clerk user ID.
-        ip_address:   Client IP address.
-
-    Returns:
-        {"response": str, "tool_used": str|None,
-         "tool_output": Any|None, "is_web_augmented": bool}
+    Run the Hierarchical Agentic Orchestrator for a single chat turn.
     """
-    logger.info("Agent chat | session=%s | '%s'", session_id, user_message[:80])
+    logger.info("Hierarchical Swarm | session=%s | '%s'", session_id, user_message[:80])
 
-    # Set the module-level session context BEFORE building tools/agent
+    # 1. Establish context references
     _set_session(session_id, user_id=user_id, ip_address=ip_address)
 
     model_name = os.getenv("ACUMEN_LLM_MODEL", "gemini-2.5-flash")
-    model = ChatGoogleGenerativeAI(model=model_name, temperature=0, max_tokens=2048)
-    agent = create_react_agent(model, TOOLS)
-
-    msgs: List = [SystemMessage(content=SYSTEM_PROMPT)]
+    llm = ChatGoogleGenerativeAI(model=model_name, temperature=0, max_tokens=1024)
+    
+    # Formulate recent chat sequence
+    recent_chat = []
     for h in (history or []):
-        role = h.get("role", "")
-        content = h.get("content", "")
-        if role == "user":
-            msgs.append(HumanMessage(content=content))
-        elif role == "assistant":
-            msgs.append(AIMessage(content=content))
-    msgs.append(HumanMessage(content=user_message))
+        recent_chat.append(f"{h.get('role', 'user').upper()}: {h.get('content', '')}")
+    recent_chat.append(f"USER: {user_message}")
+    chat_block = "\n".join(recent_chat[-4:]) # Take last 4 turns
 
-    result = await agent.ainvoke({"messages": msgs})
-    return _parse_output(result["messages"])
+    # 2. Call Orchestrator Director to form the plan
+    plan_raw = await _llm_json(ORCHESTRATOR_SYSTEM_PROMPT, f"Chat Sequence:\n{chat_block}\n\nFormulate plan.")
+    plan_data = json.loads(plan_raw)
+    
+    tactical_plan = plan_data.get("tactical_plan", "Spawning agents to analyze your query.")
+    spawn_list = plan_data.get("spawn_agents", ["ResearchAgent"])
+    intent = plan_data.get("primary_intent", "general_rag")
+    
+    # Always ensure ResearchAgent is spawned to pull context
+    if "ResearchAgent" not in spawn_list:
+        spawn_list.insert(0, "ResearchAgent")
+
+    logger.info("Spawning Swarm: %s (Intent: %s)", spawn_list, intent)
+
+    # 3. Dynamic Parallel Sub-Agent Classroom execution
+    agents_metadata = []
+    sub_tasks = []
+    
+    # First: execute ResearchAgent to get RAG context
+    research_meta = {"name": "ResearchAgent", "role": "Semantic Context Auditor", "status": "executed", "icon": "Sparkles"}
+    agents_metadata.append(research_meta)
+    
+    research_res = await run_research_agent(user_message)
+    wiki_context = research_res["wiki_context"]
+    web_search = research_res["web_search"]
+    is_web_augmented = research_res["is_web_augmented"]
+    
+    # Compile subsequent dynamic agent tasks
+    task_keys = []
+    
+    if "StudyAgent" in spawn_list or intent in ("flashcards", "multi_task"):
+        task_keys.append("StudyAgent")
+        sub_tasks.append(run_study_agent(wiki_context, user_message))
+        agents_metadata.append({"name": "StudyAgent", "role": "Cognitive Memory Specialist", "status": "executed", "icon": "BookOpen"})
+        
+    if "DevOpsAgent" in spawn_list or intent in ("architecture", "action_items", "multi_task"):
+        task_keys.append("DevOpsAgent")
+        # Determine DevOps scope
+        devops_scope = "all"
+        if intent == "architecture":
+            devops_scope = "architecture"
+        elif intent == "action_items":
+            devops_scope = "sprint"
+        sub_tasks.append(run_devops_agent(wiki_context, user_message, devops_scope))
+        agents_metadata.append({"name": "DevOpsAgent", "role": "Cloud System Architect", "status": "executed", "icon": "Database"})
+        
+    if "CreatorAgent" in spawn_list or intent in ("creator_script", "tweet_thread", "multi_task"):
+        task_keys.append("CreatorAgent")
+        # Determine Creator scope
+        creator_scope = "all"
+        if intent == "creator_script":
+            creator_scope = "script"
+        elif intent == "tweet_thread":
+            creator_scope = "tweets"
+        sub_tasks.append(run_creator_agent(wiki_context, user_message, creator_scope))
+        agents_metadata.append({"name": "CreatorAgent", "role": "Viral Media Strategist", "status": "executed", "icon": "Play"})
+        
+    if "DocumentAgent" in spawn_list or intent in ("obsidian_note", "multi_task"):
+        task_keys.append("DocumentAgent")
+        sub_tasks.append(run_document_agent(wiki_context, user_message))
+        agents_metadata.append({"name": "DocumentAgent", "role": "Knowledge Archivist", "status": "executed", "icon": "Server"})
+
+    # Execute all spawned sub-agents in parallel
+    results = await asyncio.gather(*sub_tasks)
+    
+    # Map outputs
+    sub_outputs = {}
+    
+    # Store RAG results
+    sub_outputs["live_web_search"] = web_search if is_web_augmented else wiki_context
+    
+    for key, val in zip(task_keys, results):
+        if key == "StudyAgent":
+            sub_outputs["generate_flashcards"] = val
+        elif key == "DevOpsAgent":
+            if intent == "architecture":
+                sub_outputs["architecture_assist"] = val["architecture"]
+            elif intent == "action_items":
+                sub_outputs["extract_action_items"] = val["sprint_board"]
+            else:
+                # Merge into individual pre-existing keys for frontend mapping
+                sub_outputs["architecture_assist"] = val["architecture"]
+                sub_outputs["extract_action_items"] = val["sprint_board"]
+        elif key == "CreatorAgent":
+            if intent == "creator_script":
+                sub_outputs["generate_creator_script"] = val["creator_script"]
+            elif intent == "tweet_thread":
+                sub_outputs["generate_tweet_thread"] = val["tweet_thread"]
+            else:
+                sub_outputs["generate_creator_script"] = val["creator_script"]
+                sub_outputs["generate_tweet_thread"] = val["tweet_thread"]
+        elif key == "DocumentAgent":
+            sub_outputs["generate_obsidian_markdown"] = val
+
+    # 4. Generate Orchestration Summary Conversational Response
+    summary_prompt = (
+        f"You are Acumen Director. A dynamic multi-agent swarm has completed executing tasks.\n"
+        f"Agents executed: {[meta['name'] for meta in agents_metadata]}\n"
+        f"Tactical Plan formulated: {tactical_plan}\n"
+        f"Local wiki context: {wiki_context[:1000]}...\n\n"
+        f"Write a concise, high-impact conversational summary (2-3 sentences) announcing the completion of the execution "
+        f"and inviting the user to explore the results below. Address the user as 'Founder' or 'Partner'."
+    )
+    
+    summary_resp = await llm.ainvoke([SystemMessage(content="You are a CTO summary coordinator. Be professional and intense."), HumanMessage(content=summary_prompt)])
+    summary_text = str(summary_resp.content).strip()
+
+    # Consolidate unified payload
+    tool_output = {
+        "orchestrator_plan": tactical_plan,
+        "agents_created": agents_metadata,
+        "sub_outputs": sub_outputs
+    }
+
+    # Support backwards-compatibility (map primary active tool signature)
+    main_tool = None
+    if len(task_keys) == 1:
+        if task_keys[0] == "StudyAgent":
+            main_tool = "generate_flashcards"
+        elif task_keys[0] == "DevOpsAgent":
+            main_tool = "architecture_assist" if intent == "architecture" else "extract_action_items"
+        elif task_keys[0] == "CreatorAgent":
+            main_tool = "generate_creator_script" if intent == "creator_script" else "generate_tweet_thread"
+        elif task_keys[0] == "DocumentAgent":
+            main_tool = "generate_obsidian_markdown"
+    else:
+        main_tool = "multi_agent_orchestration"
+
+    logger.info("Swarm execution complete. Main Tool Signature: %s", main_tool)
+
+    return {
+        "response": summary_text,
+        "tool_used": main_tool,
+        "tool_output": tool_output if main_tool == "multi_agent_orchestration" else (sub_outputs.get("generate_flashcards") or sub_outputs.get("architecture_assist") or sub_outputs.get("extract_action_items") or sub_outputs.get("generate_creator_script") or sub_outputs.get("generate_tweet_thread") or sub_outputs.get("generate_obsidian_markdown") or web_search),
+        "is_web_augmented": is_web_augmented
+    }

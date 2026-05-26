@@ -462,13 +462,8 @@ def build_reactflow_data(session_id: str) -> Dict[str, Any]:
     try:
         llm = ChatGoogleGenerativeAI(model="gemini-2.5-flash", temperature=0.2, max_tokens=256)
         resp = llm.invoke([HumanMessage(content=edge_prompt)])
-        raw = resp.content.strip()
-        if raw.startswith("```"):
-            parts = raw.split("```")
-            raw = parts[1] if len(parts) > 1 else raw
-            if raw.startswith("json"):
-                raw = raw[4:]
-        raw_edges: List[Dict] = json.loads(raw.strip())
+        raw = _extract_json_block(resp.content)
+        raw_edges: List[Dict] = json.loads(raw)
 
         for i, e in enumerate(raw_edges[:2]):   # cap at 2
             edges.append({

@@ -99,6 +99,7 @@ export default function ActionChat({ sessionId, messages, loading, sendMessage }
               {(msg.isWebAugmented || msg.content.includes("[SEARCH_SOURCE: DUCKDUCKGO]")) && (
                 <div className="flex flex-wrap items-center gap-2 px-1">
                   <Badge variant="outline" className="bg-[#de5833]/10 border-[#de5833]/30 text-[#de5833] glow-orange-sm text-[10px] px-2.5 py-1 rounded-full flex items-center gap-1.5 font-medium">
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
                     <img src="https://duckduckgo.com/favicon.ico" alt="DDG" className="w-3 h-3" />
                     Verified via DuckDuckGo
                   </Badge>

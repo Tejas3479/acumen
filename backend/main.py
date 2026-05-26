@@ -15,6 +15,7 @@ POST /chat                      → run Action Agent → structured tool respons
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import os
@@ -418,13 +419,6 @@ async def upload_pdf(
     if len(file_bytes) == 0:
         raise HTTPException(status_code=400, detail="Uploaded file is empty.")
 
-    try:
-        new_clusters: Dict[int, List[str]] = ingest_file(file_bytes, file.filename)
-    except ValueError as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
-    except Exception as exc:
-        raise HTTPException(status_code=500, detail=f"Ingestion error: {exc}") from exc
-
     if session_id:
         row = db.get_notebook(session_id)
         if not row or row["clerk_id"] != user.clerk_id:
@@ -488,13 +482,6 @@ async def upload_url(
             detail="Unsafe URL blocked: local and private ranges are prohibited."
         )
 
-    try:
-        new_clusters: Dict[int, List[str]] = ingest_url(req.url)
-    except ValueError as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
-    except Exception as exc:
-        raise HTTPException(status_code=500, detail=f"Ingestion error: {exc}") from exc
-
     session_id = req.session_id or str(uuid.uuid4())
 
     log_event(
@@ -556,7 +543,7 @@ async def _run_full_ingestion_background(session_id: str, title: str, file_bytes
 
         db.update_status(session_id, "ingesting")
         
-        new_clusters = ingest_file(file_bytes, title)
+        new_clusters = await asyncio.to_thread(ingest_file, file_bytes, title)
         # Convert new clusters keys to strings for consistency
         new_clusters_str = {str(k): v for k, v in new_clusters.items()}
         
@@ -598,7 +585,7 @@ async def _run_url_ingestion_background(session_id: str, url: str, clerk_id: str
 
         db.update_status(session_id, "ingesting")
         
-        new_clusters = ingest_url(url)
+        new_clusters = await asyncio.to_thread(ingest_url, url)
         new_clusters_str = {str(k): v for k, v in new_clusters.items()}
         
         # Merge clusters if appending
@@ -945,7 +932,7 @@ async def generate_podcast(session_id: str, user: ClerkUser = Depends(get_curren
         raise HTTPException(status_code=403, detail="Forbidden")
 
     try:
-        script = generate_audio_script(session_id)
+        script = await generate_audio_script(session_id)
         return {"script": script}
     except Exception as exc:
         logger.exception("Audio script generation failed for session %s.", session_id)

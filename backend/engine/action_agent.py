@@ -91,10 +91,10 @@ async def _query_wiki(query: str, n_results: int = 25, top_k: int = 5) -> str:
         return "Wiki query failed."
 
 
-def _llm_json(system_prompt: str, user_prompt: str) -> str:
+async def _llm_json(system_prompt: str, user_prompt: str) -> str:
     """Call Gemini Flash and return a clean JSON string."""
     llm = ChatGoogleGenerativeAI(model="gemini-2.5-flash", temperature=0.2, max_tokens=1500)
-    resp = llm.invoke(
+    resp = await llm.ainvoke(
         [SystemMessage(content=system_prompt), HumanMessage(content=user_prompt)]
     )
     
@@ -150,7 +150,7 @@ async def generate_flashcards(query: str) -> str:
         query=query,
     )
     wiki = await _query_wiki(query or "key concepts definitions")
-    raw = _llm_json(_FLASHCARD_SYS, f"Wiki content:\n{wiki}\n\nGenerate 5 flashcards.")
+    raw = await _llm_json(_FLASHCARD_SYS, f"Wiki content:\n{wiki}\n\nGenerate 5 flashcards.")
     parsed = json.loads(raw)
     assert isinstance(parsed, list), "Expected JSON list"
     return json.dumps(parsed)
@@ -182,7 +182,7 @@ async def architecture_assist(query: str) -> str:
         query=query,
     )
     wiki = await _query_wiki(query or "system architecture technical requirements")
-    return _llm_json(_ARCH_SYS, f"Wiki content:\n{wiki}\n\nRecommend the architecture.")
+    return await _llm_json(_ARCH_SYS, f"Wiki content:\n{wiki}\n\nRecommend the architecture.")
 
 
 # ---------------------------------------------------------------------------
@@ -211,7 +211,7 @@ async def extract_action_items(query: str) -> str:
         query=query,
     )
     wiki = await _query_wiki(query or "tasks action items next steps")
-    raw = _llm_json(_ACTION_SYS, f"Wiki content:\n{wiki}\n\nExtract action items.")
+    raw = await _llm_json(_ACTION_SYS, f"Wiki content:\n{wiki}\n\nExtract action items.")
     parsed = json.loads(raw)
     assert isinstance(parsed, list), "Expected JSON list"
     return json.dumps(parsed)
@@ -253,7 +253,7 @@ async def generate_creator_script(query: str) -> str:
         query=query,
     )
     wiki = await _query_wiki(query or "main topics key ideas")
-    return _llm_json(_SCRIPT_SYS, f"Wiki content:\n{wiki}\n\nWrite the creator script.")
+    return await _llm_json(_SCRIPT_SYS, f"Wiki content:\n{wiki}\n\nWrite the creator script.")
 
 
 # ---------------------------------------------------------------------------
@@ -311,7 +311,7 @@ async def generate_tweet_thread(query: str) -> str:
         query=query,
     )
     wiki = await _query_wiki(query or "key insights")
-    raw = _llm_json(_TWEET_SYS, f"Wiki content:\n{wiki}\n\nWrite the Twitter thread.")
+    raw = await _llm_json(_TWEET_SYS, f"Wiki content:\n{wiki}\n\nWrite the Twitter thread.")
     parsed = json.loads(raw)
     assert isinstance(parsed, list), "Expected JSON list"
     return json.dumps(parsed)
@@ -345,7 +345,7 @@ async def generate_obsidian_markdown(query: str) -> str:
         query=query,
     )
     wiki = await _query_wiki(query or "core concepts and technical details")
-    return _llm_json(_OBSIDIAN_SYS, f"Wiki content:\n{wiki}\n\nGenerate the Obsidian note.")
+    return await _llm_json(_OBSIDIAN_SYS, f"Wiki content:\n{wiki}\n\nGenerate the Obsidian note.")
 
 
 

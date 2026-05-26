@@ -20,7 +20,7 @@ Format:
 ]
 """
 
-def generate_audio_script(session_id: str) -> List[Dict[str, str]]:
+async def generate_audio_script(session_id: str) -> List[Dict[str, str]]:
     """Generates a podcast script for the given session."""
     try:
         col = get_wiki_collection()
@@ -36,7 +36,7 @@ def generate_audio_script(session_id: str) -> List[Dict[str, str]]:
 
         llm = ChatGoogleGenerativeAI(model="gemini-2.5-flash", temperature=0.7)
         
-        resp = llm.invoke([
+        resp = await llm.ainvoke([
             SystemMessage(content=SYSTEM_PROMPT),
             HumanMessage(content=f"Document snippets:\n\n{text_content}")
         ])

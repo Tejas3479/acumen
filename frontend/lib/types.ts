@@ -42,6 +42,8 @@ export interface NodeData {
   label: string;
   summary: string;
   cluster_id: number;
+  key_terms?: string[];
+  insights?: string[];
 }
 
 export interface ReactFlowNode {

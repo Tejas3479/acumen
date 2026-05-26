@@ -8,7 +8,7 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import { useAuth } from "@clerk/nextjs";
-import { Slider } from "@/components/ui/slider";
+
 
 import { BASE as API_BASE_URL } from "@/lib/api";
 
@@ -340,14 +340,15 @@ export default function PodcastPlayer({ sessionId }: { sessionId: string | null 
         
         {/* Scrubber Progress Slider */}
         <div className="space-y-1">
-          <Slider
+          <input
+            type="range"
             min={0}
             max={duration}
             step={0.01}
-            value={[currentTime]}
-            onValueChange={handleSeek}
+            value={currentTime}
+            onChange={(e) => handleSeek([parseFloat(e.target.value)])}
             disabled={isGenerating || !audioBlobUrl}
-            className="cursor-pointer py-1 [&>.relative]:bg-white/10 [&>.relative_.absolute]:bg-gradient-to-r [&>.relative_.absolute]:from-indigo-500 [&>.relative_.absolute]:to-cyan-400 [&_[role=slider]]:bg-white [&_[role=slider]]:border-indigo-400"
+            className="w-full h-1 bg-white/10 rounded-full appearance-none cursor-pointer [&::-webkit-slider-thumb]:w-3 [&::-webkit-slider-thumb]:h-3 [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-indigo-500 [&::-webkit-slider-thumb]:border-2 [&::-webkit-slider-thumb]:border-indigo-400 disabled:opacity-50 disabled:cursor-not-allowed transition-all"
           />
           <div className="flex justify-between text-[10px] font-mono text-slate-500">
             <span>{formatTime(currentTime)}</span>

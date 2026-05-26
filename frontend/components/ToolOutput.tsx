@@ -1286,7 +1286,7 @@ function MultiAgentOrchestrator({ output }: { output: SwarmOutput }) {
           </div>
 
           {/* Active Tab rendering */}
-          {activeTab && subOutputs[activeTab] && (
+          {activeTab && subOutputs[activeTab] !== undefined && subOutputs[activeTab] !== null && (
             <div className="animate-in zoom-in-98 duration-300">
               {getSubRenderer(activeTab, subOutputs[activeTab])}
             </div>

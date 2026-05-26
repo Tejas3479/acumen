@@ -750,7 +750,7 @@ export default function Dashboard() {
                           </p>
                        </div>
                        
-                       <div className="w-full max-w-md p-8 rounded-3xl bg-white/[0.03] border border-white/10 backdrop-filter blur-xl hover:bg-white/[0.05] transition-all group relative overflow-hidden">
+                       <div className="w-full max-w-md p-8 rounded-3xl bg-white/[0.03] border border-white/10 backdrop-blur-xl hover:bg-white/[0.05] transition-all group relative overflow-hidden">
                           <div className="relative z-10 space-y-6">
                             <div className="w-12 h-12 rounded-2xl bg-[#7c3aed]/20 border border-[#7c3aed]/30 flex items-center justify-center mx-auto">
                               <Plus className="w-6 h-6 text-[#a78bfa]" />

@@ -1,6 +1,7 @@
 import json
 import logging
 import hashlib
+import os
 from typing import List, Any, Dict, Optional
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_core.messages import HumanMessage, SystemMessage
@@ -13,7 +14,8 @@ _reranker_llm = None
 def _get_reranker_llm():
     global _reranker_llm
     if _reranker_llm is None:
-        _reranker_llm = ChatGoogleGenerativeAI(model="gemini-2.5-flash", temperature=0)
+        model_name = os.getenv("ACUMEN_LLM_MODEL", "gemini-2.5-flash")
+        _reranker_llm = ChatGoogleGenerativeAI(model=model_name, temperature=0)
     return _reranker_llm
 
 # Semantic Reranking Cache

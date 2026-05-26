@@ -6,7 +6,7 @@ import { toast } from "sonner";
 import {
   Brain, GitBranch, RefreshCw, LayoutPanelLeft,
   MessageSquare, Loader2, Sparkles, AlertTriangle,
-  Zap, Plus, History as HistoryIcon, Library
+  Zap, Plus, History as HistoryIcon, Library, Check
 } from "lucide-react";
 import { Progress } from "@/components/ui/progress";
 import { UserButton, useUser, useAuth } from "@clerk/nextjs";
@@ -131,6 +131,7 @@ export default function Dashboard() {
   const [loadingGraph, setLoadingGraph] = useState(false);
   const [activePanel, setActivePanel] = useState<ActivePanel>("graph");
   const [progressValue, setProgressValue] = useState(0);
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   const [progressMessage, setProgressMessage] = useState(SYNTHESIS_MESSAGES[0]);
   const [chatLoading, setChatLoading] = useState(false);
 
@@ -760,33 +761,76 @@ export default function Dashboard() {
                         </div>
                     </div>
                   )}
-                  {/* Synthesizing overlay */}
+                  {/* Synthesizing overlay (Premium AI command console checklist) */}
                   {appState === "synthesizing" && (
-                    <div className="absolute inset-0 z-20 flex flex-col items-center justify-center gap-8 px-10"
-                      style={{ background: "rgba(10,10,15,0.4)", backdropFilter: "blur(8px)" }}>
-                      <div className="flex flex-col items-center gap-3">
-                        <div className="w-16 h-16 rounded-2xl flex items-center justify-center"
-                          style={{ background: "linear-gradient(135deg,rgba(124,58,237,0.25),rgba(167,139,250,0.1))", border: "1px solid rgba(124,58,237,0.4)", boxShadow: "0 0 40px rgba(124,58,237,0.2)" }}>
-                          <Sparkles className="w-7 h-7 text-[#a78bfa] animate-pulse" />
+                    <div className="absolute inset-0 z-20 flex flex-col items-center justify-center gap-6 px-10"
+                      style={{ background: "rgba(6,6,10,0.85)", backdropFilter: "blur(18px) saturate(180%)" }}>
+                      
+                      <div className="flex flex-col items-center gap-2.5 text-center">
+                        <div className="w-14 h-14 rounded-2xl flex items-center justify-center relative shadow-[0_0_35px_rgba(124,58,237,0.25)]"
+                          style={{ background: "linear-gradient(135deg,rgba(124,58,237,0.3),rgba(6,182,212,0.15))", border: "1px solid rgba(124,58,237,0.4)" }}>
+                          <Sparkles className="w-6.5 h-6.5 text-[#a78bfa] animate-pulse" />
+                          <div className="absolute -inset-[2px] rounded-2xl border border-indigo-500/30 animate-ping opacity-60 pointer-events-none" />
                         </div>
-                        <h2 className="text-lg font-bold gradient-text">Synthesizing Knowledge Graph</h2>
-                        <p className="text-sm text-slate-400 text-center max-w-xs">{progressMessage}</p>
+                        <h2 className="text-lg font-bold gradient-text uppercase tracking-widest mt-1">Acumen Synthesis Console</h2>
+                        <p className="text-[11px] text-slate-500 font-mono">Enqueuing parallel LangGraph KMeans swarms</p>
                       </div>
-                      <div className="w-full max-w-sm space-y-2">
-                        <Progress value={progressValue} className="h-2 bg-white/5" />
-                        <div className="flex justify-between text-[11px] text-slate-600">
-                          <span>LangGraph Swarm running…</span>
-                          <span>{Math.round(progressValue)}%</span>
+
+                      {/* Command checklist boxes */}
+                      <div className="w-full max-w-md bg-black/40 border border-white/5 rounded-3xl p-5 space-y-3 shadow-2xl font-mono text-[11px]">
+                        {[
+                          { id: "read", threshold: 10, label: "Decompressing document bytes and sanitizing SSRF keys..." },
+                          { id: "chunk", threshold: 28, label: "Splitting text blocks into overlapping concept segments..." },
+                          { id: "embed", threshold: 48, label: "Generating 768-dimension vectors via gemini-embedding-001..." },
+                          { id: "cluster", threshold: 68, label: "Fitting spherical KMeans models to group topic coordinates..." },
+                          { id: "swarm", threshold: 88, label: "Coordinating parallel LangGraph Swarms to synthesize Wiki pages..." },
+                          { id: "chroma", threshold: 98, label: "Injecting vector indices and building ReactFlow maps..." }
+                        ].map((chk, idx, arr) => {
+                          const isDone = progressValue >= chk.threshold;
+                          // Active is the first incomplete step
+                          const isActive = !isDone && (idx === 0 || progressValue >= arr[idx - 1].threshold);
+                          return (
+                            <div 
+                              key={chk.id}
+                              className={`flex items-center gap-3 transition-all duration-300 ${
+                                isDone 
+                                  ? "text-emerald-400 font-bold" 
+                                  : isActive 
+                                    ? "text-indigo-400 font-bold translate-x-1" 
+                                    : "text-slate-600 opacity-60"
+                              }`}
+                            >
+                              {isDone ? (
+                                <Check className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
+                              ) : isActive ? (
+                                <Loader2 className="w-3.5 h-3.5 text-indigo-400 animate-spin shrink-0" />
+                              ) : (
+                                <div className="w-3.5 h-3.5 rounded-full border border-white/10 shrink-0" />
+                              )}
+                              <span className="truncate flex-1">{chk.label}</span>
+                            </div>
+                          );
+                        })}
+                      </div>
+
+                      {/* Main Overall Progress bar */}
+                      <div className="w-full max-w-md space-y-2">
+                        <Progress value={progressValue} className="h-1.5 bg-white/5" />
+                        <div className="flex justify-between text-[10px] font-mono text-slate-500">
+                          <span>Total Ingest Progress</span>
+                          <span className="font-bold text-[#a78bfa]">{Math.round(progressValue)}%</span>
                         </div>
                       </div>
-                      <div className="flex gap-2">
+
+                      <div className="flex gap-2.5 pt-1">
                         {[0,1,2,3,4].map((i) => (
-                          <div key={i} className="w-2 h-2 rounded-full bg-[#7c3aed]/50"
+                          <div key={i} className="w-1.5 h-1.5 rounded-full bg-[#7c3aed]/50 shadow-[0_0_8px_rgba(124,58,237,0.4)]"
                             style={{ animation: `wave-bar 0.9s ease-in-out ${i*0.15}s infinite alternate` }} />
                         ))}
                       </div>
                     </div>
                   )}
+
 
                   {/* Error overlay */}
                   {appState === "error" && (

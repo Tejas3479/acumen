@@ -1,5 +1,6 @@
 import json
 import logging
+import os
 from typing import List, Dict
 
 from langchain_core.messages import SystemMessage, HumanMessage
@@ -34,7 +35,8 @@ async def generate_audio_script(session_id: str) -> List[Dict[str, str]]:
         if len(text_content) > 10000:
             text_content = text_content[:10000]
 
-        llm = ChatGoogleGenerativeAI(model="gemini-2.5-flash", temperature=0.7)
+        model_name = os.getenv("ACUMEN_LLM_MODEL", "gemini-2.5-flash")
+        llm = ChatGoogleGenerativeAI(model=model_name, temperature=0.7)
         
         resp = await llm.ainvoke([
             SystemMessage(content=SYSTEM_PROMPT),

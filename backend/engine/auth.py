@@ -123,10 +123,20 @@ async def _verify_token(token: str) -> Dict[str, Any]:
     jwks = await _fetch_jwks_async()
 
     try:
-        # jose will select the right key from the JWKS using the token's `kid`
+        # jose requires selecting the correct key from the JWKS using the token's `kid`
+        unverified_headers = jwt.get_unverified_header(token)
+        kid = unverified_headers.get("kid")
+        if not kid:
+            raise JWKError("Token header is missing 'kid' (key ID).")
+
+        # Find the matching key in JWKS
+        jwk = next((key for key in jwks.get("keys", []) if key.get("kid") == kid), None)
+        if not jwk:
+            raise JWKError(f"No matching key found in JWKS for 'kid': {kid}")
+
         claims = jwt.decode(
             token,
-            jwks,
+            jwk,
             algorithms=["RS256"],
             options={
                 "verify_aud": False,   # Clerk does not set a fixed audience

@@ -18,6 +18,7 @@ Tool Output Schemas (consumed by frontend as rich UI):
 
 import contextvars
 import json
+import os
 import logging
 from typing import Any, Dict, List, Optional
 
@@ -93,7 +94,8 @@ async def _query_wiki(query: str, n_results: int = 25, top_k: int = 5) -> str:
 
 async def _llm_json(system_prompt: str, user_prompt: str) -> str:
     """Call Gemini Flash and return a clean JSON string."""
-    llm = ChatGoogleGenerativeAI(model="gemini-2.5-flash", temperature=0.2, max_tokens=1500)
+    model_name = os.getenv("ACUMEN_LLM_MODEL", "gemini-2.5-flash")
+    llm = ChatGoogleGenerativeAI(model=model_name, temperature=0.2, max_tokens=1500)
     resp = await llm.ainvoke(
         [SystemMessage(content=system_prompt), HumanMessage(content=user_prompt)]
     )
@@ -471,7 +473,8 @@ async def run_agent_chat(
     # Set the module-level session context BEFORE building tools/agent
     _set_session(session_id, user_id=user_id, ip_address=ip_address)
 
-    model = ChatGoogleGenerativeAI(model="gemini-2.5-flash", temperature=0, max_tokens=2048)
+    model_name = os.getenv("ACUMEN_LLM_MODEL", "gemini-2.5-flash")
+    model = ChatGoogleGenerativeAI(model=model_name, temperature=0, max_tokens=2048)
     agent = create_react_agent(model, TOOLS)
 
     msgs: List = [SystemMessage(content=SYSTEM_PROMPT)]

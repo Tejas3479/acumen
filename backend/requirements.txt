@@ -1,11 +1,11 @@
 # Acumen Backend — Pinned Requirements
 # Web Framework
-fastapi==0.111.0
-uvicorn[standard]==0.29.0
-python-multipart==0.0.9
+fastapi==0.115.6
+uvicorn[standard]==0.34.0
+python-multipart==0.0.20
 
 # Modern PDF Parsing
-pypdf==4.2.0
+pypdf==4.3.1
 # pdfplumber==0.11.0
 
 # OCR & Image Processing (Removed for Render compliance — requires external system binaries)
@@ -13,37 +13,32 @@ pypdf==4.2.0
 # pdf2image==1.17.0
 
 # LangChain Ecosystem & LangGraph
-langchain==0.3.0
-langchain-core==0.3.0
-langchain-community==0.3.0
-langchain-google-genai==2.0.1
-langgraph==0.2.30
-pydantic==2.9.2
-pydantic-settings==2.5.2
+langchain==0.3.25
+langchain-core==0.3.57
+langchain-community==0.3.23
+langchain-google-genai==2.1.4
+langgraph==0.4.7
+pydantic==2.11.5
+pydantic-settings==2.9.1
 
-# Vector Store (in-memory)
-chromadb==0.5.0
+# Vector Store
+chromadb==0.6.3
 
 # ML / Numerics
-scikit-learn==1.4.2
+scikit-learn==1.6.1
 numpy==1.26.4
 
 # Web Search
-duckduckgo-search==6.1.7
+duckduckgo-search==7.5.3
 
 # Utilities
-python-dotenv==1.0.1
-tenacity==8.3.0
-slowapi==0.1.9
+python-dotenv==1.1.0
 
 # Auth — Clerk JWT verification
-clerk-backend-api==1.0.0          # official Clerk Python SDK
 python-jose[cryptography]==3.3.0  # RS256 JWT decoding + JWKS support
 httpx==0.27.0                     # HTTP client for JWKS endpoint fetch
 
 # Text-to-Speech
-huggingface_hub==0.23.0
-requests==2.31.0
-beautifulsoup4==4.12.3
-
-
+huggingface_hub==0.27.0
+requests==2.32.3
+beautifulsoup4==4.13.4

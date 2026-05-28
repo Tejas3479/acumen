@@ -3,12 +3,12 @@
 import { useState, useRef, useEffect } from "react";
 import { Send, Zap, Loader2, BookOpen, Cpu, ListTodo, Clapperboard, Share2 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
-import type { WikiPage, Message } from "@/lib/types";
+import type { Message } from "@/lib/types";
 import ToolOutput from "@/components/ToolOutput";
+import CitationBadge from "@/components/CitationBadge";
 
 interface ActionChatProps {
   sessionId: string | null;
-  wikiPages: WikiPage[];
   messages: Message[];
   loading: boolean;
   sendMessage: (text: string) => Promise<void>;
@@ -23,6 +23,41 @@ const ACTIONS = [
   { icon: Share2,    label: "Viral Thread", prompt: "Write a 5-part viral Twitter thread based on this document.", color: "#3b82f6" },
   { icon: BookOpen,   label: "Obsidian Note", prompt: "Format this knowledge into a clean, professional Obsidian Markdown note.", color: "#f97316" },
 ] as const;
+
+const parseCitations = (text: string) => {
+  // Regex to match [Source: filename.pdf, Page N]
+  const regex = /\[Source:\s*([^,\]]+),\s*Page\s*(\d+)\]/g;
+  const parts = [];
+  let lastIndex = 0;
+  let match;
+
+  while ((match = regex.exec(text)) !== null) {
+    const matchIndex = match.index;
+    if (matchIndex > lastIndex) {
+      parts.push(text.slice(lastIndex, matchIndex));
+    }
+
+    const sourceTitle = match[1].trim();
+    const pageNum = parseInt(match[2], 10);
+
+    parts.push(
+      <CitationBadge
+        key={`cite-${matchIndex}`}
+        sourceTitle={sourceTitle}
+        pageNum={pageNum}
+      />
+    );
+
+    lastIndex = regex.lastIndex;
+  }
+
+  if (lastIndex < text.length) {
+    parts.push(text.slice(lastIndex));
+  }
+
+  return parts.length > 0 ? parts : text;
+};
+
 
 // ─────────────────────────────────────────────────────────────────────────────
 export default function ActionChat({ sessionId, messages, loading, sendMessage }: ActionChatProps) {
@@ -69,7 +104,7 @@ export default function ActionChat({ sessionId, messages, loading, sendMessage }
         </div>
         <div>
           <h2 className="text-sm font-semibold text-white leading-none mb-0.5">Action Agent</h2>
-          <p className="text-[11px] text-slate-500">5 tools · LangGraph ReAct · GPT-4o</p>
+          <p className="text-[11px] text-slate-500">Gemini 2.5 Flash · Hierarchical Swarm</p>
         </div>
         {sessionId && (
           <div className="ml-auto flex items-center gap-1.5">
@@ -120,8 +155,11 @@ export default function ActionChat({ sessionId, messages, loading, sendMessage }
 
               {/* Bubble */}
               <div
-                className={`max-w-[88%] px-4 py-3 text-sm leading-relaxed whitespace-pre-wrap
-                  ${msg.role === "user" ? "bg-white/[0.05] text-white border border-white/10 rounded-2xl rounded-tr-sm" : "bg-white/[0.02] text-slate-200 border border-white/5 rounded-2xl rounded-tl-sm"}`}
+                className={`max-w-[88%] px-4 py-3 text-sm leading-relaxed whitespace-pre-wrap transition-all duration-300 hover:scale-[1.005]
+                  ${msg.role === "user" 
+                    ? "bg-gradient-to-tr from-[#7c3aed]/15 to-[#4f46e5]/10 text-white border border-[#7c3aed]/30 rounded-2xl rounded-tr-sm shadow-[0_0_15px_rgba(124,58,237,0.08)]" 
+                    : "bg-[#111118]/85 backdrop-blur-md text-slate-200 border border-white/8 rounded-2xl rounded-tl-sm shadow-[0_0_20px_rgba(0,0,0,0.15)]"
+                  }`}
               >
                 {(() => {
                   const cleaned = msg.content.replace(/\[SOURCE: WEB\]\s*/g, "").replace(/\[SEARCH_SOURCE: DUCKDUCKGO\]\s*/g, "").trim();
@@ -131,7 +169,7 @@ export default function ActionChat({ sessionId, messages, loading, sendMessage }
                       return <ToolOutput toolName="extract_action_items" output={parsed} />;
                     }
                   } catch {}
-                  return cleaned;
+                  return parseCitations(cleaned);
                 })()}
               </div>
 
@@ -148,15 +186,15 @@ export default function ActionChat({ sessionId, messages, loading, sendMessage }
         {/* Thinking indicator */}
         {loading && (
           <div className="flex items-start">
-            <div className="chat-bubble-ai px-4 py-3 flex items-center gap-2.5">
-              <Loader2 className="w-3.5 h-3.5 text-[#7c3aed] animate-spin" />
-              <span className="text-xs text-slate-400">Agent thinking…</span>
+            <div className="bg-[#111118]/85 backdrop-blur-md border border-white/8 rounded-2xl rounded-tl-sm px-4 py-3 flex items-center gap-2.5 shadow-lg">
+              <Loader2 className="w-3.5 h-3.5 text-[#a78bfa] animate-spin" />
+              <span className="text-xs text-slate-400 font-medium">Agent thinking…</span>
               <div className="flex gap-0.5">
                 {[0, 1, 2].map((d) => (
                   <span
                     key={d}
-                    className="w-1 h-1 rounded-full bg-slate-600"
-                    style={{ animation: `pulse-dot 1.2s ease-in-out ${d * 0.2}s infinite` }}
+                    className="w-1 h-1 rounded-full bg-slate-500 animate-pulse"
+                    style={{ animationDelay: `${d * 0.2}s` }}
                   />
                 ))}
               </div>

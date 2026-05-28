@@ -14,9 +14,6 @@ import {
   Play,
   Pause,
   ArrowRight,
-  Heart,
-  MessageCircle,
-  Repeat2,
   Copy,
   ChevronLeft,
   ChevronRight,
@@ -865,21 +862,6 @@ function TwitterThread({ thread }: { thread: string[] }) {
               {tweet}
             </p>
 
-            {/* Bottom Twitter Icons and Engagement Stats */}
-            <div className="flex items-center gap-6 mt-4 pl-9 text-slate-600 text-[10px] font-mono">
-              <span className="flex items-center gap-1.5 hover:text-sky-400 cursor-pointer transition-colors">
-                <MessageCircle className="w-3.5 h-3.5" /> {12 + i * 4}
-              </span>
-              <span className="flex items-center gap-1.5 hover:text-emerald-400 cursor-pointer transition-colors">
-                <Repeat2 className="w-3.5 h-3.5" /> {45 + i * 12}
-              </span>
-              <span className="flex items-center gap-1.5 hover:text-rose-400 cursor-pointer transition-colors">
-                <Heart className="w-3.5 h-3.5" /> {120 + i * 24}
-              </span>
-              <span className="hidden sm:inline ml-auto text-slate-600 font-sans text-[10px]">
-                {2.4 + i * 0.5}K views
-              </span>
-            </div>
           </div>
         ))}
       </div>

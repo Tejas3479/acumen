@@ -35,13 +35,17 @@ async def generate_audio_script(session_id: str) -> List[Dict[str, str]]:
         if len(text_content) > 10000:
             text_content = text_content[:10000]
 
-        model_name = os.getenv("ACUMEN_LLM_MODEL", "gemini-2.5-flash")
-        llm = ChatGoogleGenerativeAI(model=model_name, temperature=0.7)
+        from engine.fallback_chain import invoke_llm_with_fallback
         
-        resp = await llm.ainvoke([
-            SystemMessage(content=SYSTEM_PROMPT),
-            HumanMessage(content=f"Document snippets:\n\n{text_content}")
-        ])
+        resp = await invoke_llm_with_fallback(
+            [
+                SystemMessage(content=SYSTEM_PROMPT),
+                HumanMessage(content=f"Document snippets:\n\n{text_content}")
+            ],
+            temperature=0.7,
+            max_tokens=2048,
+            structured_json=True
+        )
         
         # Extract string content from response robustly (safeguard against list or complex structures)
         content = resp.content
@@ -52,11 +56,8 @@ async def generate_audio_script(session_id: str) -> List[Dict[str, str]]:
         raw = raw.strip()
         
         # Robustly extract JSON block (array)
-        start_arr = raw.find("[")
-        end_arr = raw.rfind("]")
-        
-        if start_arr != -1 and end_arr != -1 and end_arr > start_arr:
-            raw = raw[start_arr:end_arr+1]
+        from engine.wiki_swarm import _extract_json_block
+        raw = _extract_json_block(raw)
 
         data = json.loads(raw)
         if not isinstance(data, list):

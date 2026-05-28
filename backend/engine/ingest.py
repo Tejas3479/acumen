@@ -4,7 +4,7 @@ Acumen — Ingestion & ML Clustering Engine
 Karpathy Wiki Pattern: Step 1
   1. Extract text from an uploaded PDF.
   2. Chunk text with RecursiveCharacterTextSplitter.
-  3. Embed every chunk (OpenAI text-embedding-3-small, or HuggingFace fallback).
+  3. Embed every chunk (Gemini gemini-embedding-001).
   4. Cluster embeddings with KMeans (n_clusters=5).
   5. Return { cluster_id (int): [chunk_texts] } for the Synthesizer Swarm.
 """
@@ -238,11 +238,6 @@ def ingest_file(file_bytes: bytes, filename: str) -> Dict[int, List[str]]:
     return clusters
 
 
-def ingest_pdf(pdf_bytes: bytes) -> Dict[int, List[str]]:
-    """
-    Full ingestion pipeline for PDFs (backward compatibility).
-    """
-    return ingest_file(pdf_bytes, "document.pdf")
 
 
 def scrape_website_text(url: str) -> str:

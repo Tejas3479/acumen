@@ -25,10 +25,22 @@ from contextlib import asynccontextmanager
 from typing import Any, Dict, List, Optional
 
 from dotenv import load_dotenv
-from fastapi import BackgroundTasks, Depends, FastAPI, File, HTTPException, UploadFile, Request
+from fastapi import BackgroundTasks, Depends, FastAPI, File, HTTPException, UploadFile, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
+
+# Rate Limiting
+from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi.util import get_remote_address
+from slowapi.errors import RateLimitExceeded
+
+limiter = Limiter(key_func=get_remote_address)
+
+# LangChain 0.3 Compatibility Monkeypatch (verbose attribute removed in 0.3)
+import langchain
+if not hasattr(langchain, "verbose"):
+    langchain.verbose = False
 
 # Load .env (GOOGLE_API_KEY etc.) before any engine imports
 load_dotenv()
@@ -48,6 +60,7 @@ os.makedirs(DATA_DIR, exist_ok=True)
 os.environ.setdefault("ACUMEN_CHROMA_PATH", os.path.join(DATA_DIR, "chroma_db"))
 
 from engine.ingest import ingest_file, ingest_url                  # noqa: E402
+from engine.ingest_v2 import ingest_document_v2, ingest_url_v2      # noqa: E402
 from engine.wiki_swarm import run_wiki_swarm, build_reactflow_data  # noqa: E402
 from engine.action_agent import run_agent_chat                  # noqa: E402
 from engine.audio import generate_audio_script                  # noqa: E402
@@ -111,15 +124,31 @@ async def enforce_https_middleware(request: Request, call_next):
 
 
 # ---------------------------------------------------------------------------
-# CORS — allow everything for local dev and prevent 'Failed to Fetch'
+# CORS & Rate Limiting (P0.2 & P0.3)
 # ---------------------------------------------------------------------------
+ALLOWED_ORIGINS = os.getenv("ACUMEN_ALLOWED_ORIGINS", "http://localhost:3000").split(",")
+# If we have "*" in origins, set allow_credentials to False, otherwise True
+allow_creds = True
+if "*" in ALLOWED_ORIGINS:
+    allow_creds = False
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=False, # Must be False if allow_origins=["*"]
+    allow_origins=ALLOWED_ORIGINS,
+    allow_credentials=allow_creds,
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+
+
+# ---------------------------------------------------------------------------
+# Model Context Protocol (P5.3)
+# ---------------------------------------------------------------------------
+from engine.mcp_server import mcp
+app.mount("/mcp", mcp.sse_app())
 
 
 # ---------------------------------------------------------------------------
@@ -134,9 +163,6 @@ class ClusterPreview(BaseModel):
 
 class UploadResponse(BaseModel):
     message: str
-    total_chunks: int
-    clusters: List[ClusterPreview]
-    # The full cluster map is stored server-side in app.state for the swarm
     session_id: str
 
 
@@ -304,6 +330,41 @@ class Database:
                     "ALTER TABLE notebooks ADD COLUMN history_json TEXT NOT NULL DEFAULT '[]'"
                 )
                 logger.info("Migration: added 'history_json' column to notebooks.")
+            if "notes_json" not in existing_cols:
+                conn.execute(
+                    "ALTER TABLE notebooks ADD COLUMN notes_json TEXT NOT NULL DEFAULT '{}'"
+                )
+                logger.info("Migration: added 'notes_json' column to notebooks.")
+            if "snippets_json" not in existing_cols:
+                conn.execute(
+                    "ALTER TABLE notebooks ADD COLUMN snippets_json TEXT NOT NULL DEFAULT '[]'"
+                )
+                logger.info("Migration: added 'snippets_json' column to notebooks.")
+            if "links_json" not in existing_cols:
+                conn.execute(
+                    "ALTER TABLE notebooks ADD COLUMN links_json TEXT NOT NULL DEFAULT '[]'"
+                )
+                logger.info("Migration: added 'links_json' column to notebooks.")
+            if "sources_json" not in existing_cols:
+                conn.execute(
+                    "ALTER TABLE notebooks ADD COLUMN sources_json TEXT NOT NULL DEFAULT '[]'"
+                )
+                logger.info("Migration: added 'sources_json' column to notebooks.")
+            if "flashcard_progress_json" not in existing_cols:
+                conn.execute(
+                    "ALTER TABLE notebooks ADD COLUMN flashcard_progress_json TEXT NOT NULL DEFAULT '{}'"
+                )
+                logger.info("Migration: added 'flashcard_progress_json' column to notebooks.")
+            if "share_token" not in existing_cols:
+                conn.execute(
+                    "ALTER TABLE notebooks ADD COLUMN share_token TEXT"
+                )
+                logger.info("Migration: added 'share_token' column to notebooks.")
+            if "graph_layout_json" not in existing_cols:
+                conn.execute(
+                    "ALTER TABLE notebooks ADD COLUMN graph_layout_json TEXT NOT NULL DEFAULT '{}'"
+                )
+                logger.info("Migration: added 'graph_layout_json' column to notebooks.")
             conn.commit()
         logger.info("SQLite database ready at '%s'.", self.path)
 
@@ -357,6 +418,75 @@ class Database:
             conn.commit()
         logger.info("Chat history updated for session %s (%d messages).", session_id, len(history))
 
+    def update_notes(self, session_id: str, notes: Dict[str, str]) -> None:
+        """Update the notes JSON for a notebook."""
+        notes_json = json.dumps(notes)
+        with self._connect() as conn:
+            conn.execute(
+                "UPDATE notebooks SET notes_json = ? WHERE session_id = ?",
+                (notes_json, session_id),
+            )
+            conn.commit()
+
+    def update_snippets(self, session_id: str, snippets: List[Dict[str, Any]]) -> None:
+        """Update the snippets JSON for a notebook."""
+        snippets_json = json.dumps(snippets)
+        with self._connect() as conn:
+            conn.execute(
+                "UPDATE notebooks SET snippets_json = ? WHERE session_id = ?",
+                (snippets_json, session_id),
+            )
+            conn.commit()
+
+    def update_links(self, session_id: str, links: List[Dict[str, Any]]) -> None:
+        """Update the links JSON for a notebook."""
+        links_json = json.dumps(links)
+        with self._connect() as conn:
+            conn.execute(
+                "UPDATE notebooks SET links_json = ? WHERE session_id = ?",
+                (links_json, session_id),
+            )
+            conn.commit()
+
+    def update_sources(self, session_id: str, sources: List[Dict[str, Any]]) -> None:
+        """Update the sources JSON for a notebook."""
+        sources_json = json.dumps(sources)
+        with self._connect() as conn:
+            conn.execute(
+                "UPDATE notebooks SET sources_json = ? WHERE session_id = ?",
+                (sources_json, session_id),
+            )
+            conn.commit()
+
+    def update_flashcard_progress(self, session_id: str, progress: Dict[str, Any]) -> None:
+        """Update the flashcard progress JSON for a notebook."""
+        progress_json = json.dumps(progress)
+        with self._connect() as conn:
+            conn.execute(
+                "UPDATE notebooks SET flashcard_progress_json = ? WHERE session_id = ?",
+                (progress_json, session_id),
+            )
+            conn.commit()
+
+    def update_graph_layout(self, session_id: str, layout: Dict[str, Any]) -> None:
+        """Update the graph layout JSON for a notebook."""
+        layout_json = json.dumps(layout)
+        with self._connect() as conn:
+            conn.execute(
+                "UPDATE notebooks SET graph_layout_json = ? WHERE session_id = ?",
+                (layout_json, session_id),
+            )
+            conn.commit()
+
+    def update_share_token(self, session_id: str, share_token: Optional[str]) -> None:
+        """Update the share token for a notebook."""
+        with self._connect() as conn:
+            conn.execute(
+                "UPDATE notebooks SET share_token = ? WHERE session_id = ?",
+                (share_token, session_id),
+            )
+            conn.commit()
+
     def get_notebook(self, session_id: str) -> Optional[sqlite3.Row]:
         """Fetch a single notebook row by session_id."""
         with self._connect() as conn:
@@ -392,6 +522,7 @@ async def health_check() -> Dict[str, str]:
 
 
 @app.post("/upload", response_model=UploadResponse, tags=["ingestion"])
+@limiter.limit("10/minute")
 async def upload_pdf(
     request: Request,
     background_tasks: BackgroundTasks,
@@ -448,13 +579,12 @@ async def upload_pdf(
 
     return UploadResponse(
         message=f"📥 '{file.filename}' received. Processing in background…",
-        total_chunks=0, # Will be updated in DB later
-        clusters=[],
         session_id=session_id,
     )
 
 
 @app.post("/upload-url", tags=["ingestion"], status_code=202)
+@limiter.limit("10/minute")
 async def upload_url(
     request: Request,
     req: UrlRequest,
@@ -528,22 +658,39 @@ def get_session(session_id: str) -> Dict[int, List[str]]:
 
 async def _run_full_ingestion_background(session_id: str, title: str, file_bytes: bytes, clerk_id: str) -> None:
     """Worker for full async file ingestion pipeline (handles new and append)."""
+    import time
+    source_id = f"src_{uuid.uuid4().hex[:8]}"
+    ext = title.lower().split(".")[-1]
+    source_type = ext if ext in ("pdf", "docx", "txt", "md", "html") else "pdf"
+    
     try:
-        ext = title.lower().split(".")[-1]
-        source_type = ext if ext in ("pdf", "docx", "txt", "md", "html") else "pdf"
-
         # Check if we are appending
         row = db.get_notebook(session_id)
         existing_clusters = {}
+        sources = []
+        
         if row:
             existing_clusters = json.loads(row["clusters_json"] or "{}")
             logger.info("Appending to existing session %s", session_id)
+            if "sources_json" in row.keys() and row["sources_json"]:
+                try:
+                    sources = json.loads(row["sources_json"])
+                except Exception:
+                    sources = []
         else:
             db.save_notebook(session_id, title, {}, clerk_id, source_type=source_type)
 
-        db.update_status(session_id, "ingesting")
-        
-        new_clusters = await asyncio.to_thread(ingest_file, file_bytes, title)
+        new_source = {
+            "source_id": source_id,
+            "title": title,
+            "source_type": source_type,
+            "status": "processing",
+            "created_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+        }
+        sources.append(new_source)
+        db.update_sources(session_id, sources)
+
+        new_clusters = await ingest_document_v2(file_bytes, title, session_id, source_id=source_id)
         # Convert new clusters keys to strings for consistency
         new_clusters_str = {str(k): v for k, v in new_clusters.items()}
         
@@ -562,30 +709,65 @@ async def _run_full_ingestion_background(session_id: str, title: str, file_bytes
             _sessions[session_id] = new_clusters
             swarm_clusters = new_clusters
 
+        # Update source status to completed
+        for s in sources:
+            if s["source_id"] == source_id:
+                s["status"] = "completed"
+        db.update_sources(session_id, sources)
+
         db.update_status(session_id, "synthesizing")
         await run_wiki_swarm(session_id=session_id, clusters=swarm_clusters)
         db.update_status(session_id, "completed")
     except Exception as exc:
         logger.exception("[BG] Ingestion failed for session %s: %s", session_id, exc)
         db.update_status(session_id, "error")
+        # Mark source as error
+        try:
+            row = db.get_notebook(session_id)
+            if row and "sources_json" in row.keys() and row["sources_json"]:
+                sources = json.loads(row["sources_json"])
+                for s in sources:
+                    if s["source_id"] == source_id:
+                        s["status"] = "error"
+                db.update_sources(session_id, sources)
+        except Exception:
+            pass
 
 
 async def _run_url_ingestion_background(session_id: str, url: str, clerk_id: str) -> None:
     """Worker for full async URL ingestion pipeline (handles new and append)."""
+    import time
+    source_id = f"src_{uuid.uuid4().hex[:8]}"
+    title = url.split("//")[-1].split("/")[0]
+    
     try:
         # Check if we are appending
         row = db.get_notebook(session_id)
         existing_clusters = {}
+        sources = []
+        
         if row:
             existing_clusters = json.loads(row["clusters_json"] or "{}")
             logger.info("Appending URL to existing session %s", session_id)
+            if "sources_json" in row.keys() and row["sources_json"]:
+                try:
+                    sources = json.loads(row["sources_json"])
+                except Exception:
+                    sources = []
         else:
-            title = url.split("//")[-1].split("/")[0]
             db.save_notebook(session_id, title, {}, clerk_id)
 
-        db.update_status(session_id, "ingesting")
-        
-        new_clusters = await asyncio.to_thread(ingest_url, url)
+        new_source = {
+            "source_id": source_id,
+            "title": url,
+            "source_type": "url",
+            "status": "processing",
+            "created_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+        }
+        sources.append(new_source)
+        db.update_sources(session_id, sources)
+
+        new_clusters = await ingest_url_v2(url, session_id, source_id=source_id)
         new_clusters_str = {str(k): v for k, v in new_clusters.items()}
         
         # Merge clusters if appending
@@ -602,24 +784,29 @@ async def _run_url_ingestion_background(session_id: str, url: str, clerk_id: str
             _sessions[session_id] = new_clusters
             swarm_clusters = new_clusters
 
+        # Update source status to completed
+        for s in sources:
+            if s["source_id"] == source_id:
+                s["status"] = "completed"
+        db.update_sources(session_id, sources)
+
         db.update_status(session_id, "synthesizing")
         await run_wiki_swarm(session_id=session_id, clusters=swarm_clusters)
         db.update_status(session_id, "completed")
     except Exception as exc:
         logger.exception("[BG] URL ingestion failed for session %s: %s", session_id, exc)
         db.update_status(session_id, "error")
-
-
-async def _run_swarm_background(session_id: str, clusters: Dict[int, List[str]]) -> None:
-    """Worker executed by BackgroundTasks — runs the LangGraph swarm and updates SQLite."""
-    try:
-        logger.info("[BG] Wiki swarm starting for session %s …", session_id)
-        await run_wiki_swarm(session_id=session_id, clusters=clusters)
-        db.update_status(session_id, "completed")
-        logger.info("[BG] Wiki swarm completed for session %s.", session_id)
-    except Exception as exc:
-        logger.exception("[BG] Wiki swarm failed for session %s: %s", session_id, exc)
-        db.update_status(session_id, "error")
+        # Mark source as error
+        try:
+            row = db.get_notebook(session_id)
+            if row and "sources_json" in row.keys() and row["sources_json"]:
+                sources = json.loads(row["sources_json"])
+                for s in sources:
+                    if s["source_id"] == source_id:
+                        s["status"] = "error"
+                db.update_sources(session_id, sources)
+        except Exception:
+            pass
 
 
 @app.post("/synthesize/{session_id}", tags=["swarm"])
@@ -630,8 +817,7 @@ async def synthesize(
     user: ClerkUser = Depends(get_current_user),
 ) -> Dict[str, str]:
     """
-    Kick off the LangGraph Synthesizer Swarm for a given session.
-    Returns immediately with {"status": "processing"}.
+    Trigger re-synthesis of Wiki pages for a given session.
     """
     row = db.get_notebook(session_id)
     if row is None:
@@ -643,16 +829,11 @@ async def synthesize(
     if row["clerk_id"] and row["clerk_id"] != user.clerk_id:
         raise HTTPException(status_code=403, detail="Forbidden")
 
-    # If already processing (because /upload dispatched it), just return safely.
-    if row["status"] == "processing":
-        return {"status": "processing", "session_id": session_id}
-
     try:
         clusters = get_session(session_id)
     except KeyError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 
-    # Log successful synthesis initiation to audit trail
     log_event(
         AUDIT_SYNTHESIZE,
         user_id=user.clerk_id,
@@ -660,8 +841,16 @@ async def synthesize(
         ip_address=get_client_ip(request),
     )
 
-    background_tasks.add_task(_run_swarm_background, session_id, clusters)
-    logger.info("Swarm enqueued in background for session %s.", session_id)
+    async def run_re_synthesis():
+        try:
+            db.update_status(session_id, "synthesizing")
+            await run_wiki_swarm(session_id=session_id, clusters=clusters)
+            db.update_status(session_id, "completed")
+        except Exception as exc:
+            logger.exception("Re-synthesis failed: %s", exc)
+            db.update_status(session_id, "error")
+
+    background_tasks.add_task(run_re_synthesis)
     return {"status": "processing", "session_id": session_id}
 
 
@@ -795,6 +984,7 @@ async def status_stream(
 
 
 @app.post("/chat", response_model=ChatResponse, tags=["agent"])
+@limiter.limit("30/minute")
 async def chat_endpoint(
     request: Request,
     req: ChatRequest,
@@ -868,6 +1058,61 @@ async def chat_endpoint(
         return ChatResponse(response=f"Backend Error: {str(exc)}")
 
 
+@app.post("/chat/stream", tags=["agent"])
+@limiter.limit("30/minute")
+async def chat_stream(
+    request: Request,
+    req: ChatRequest,
+    user: ClerkUser = Depends(get_current_user),
+):
+    """
+    SSE stream endpoint for chat interactions.
+    Streams token-by-token responses and sends tool outputs at the end of the stream.
+    """
+    row = db.get_notebook(req.session_id)
+    if row and row["clerk_id"] and row["clerk_id"] != user.clerk_id:
+        raise HTTPException(status_code=403, detail="Forbidden")
+
+    sanitized_msg, warnings = sanitize_chat_input(req.message, user_id=user.clerk_id)
+    client_ip = get_client_ip(request)
+
+    async def event_generator():
+        try:
+            # Yield initial token or spawn logs
+            yield f"data: {json.dumps({'token': '🧠 Swarm Director coordinating plan...'})}\n\n"
+            await asyncio.sleep(0.05)
+            
+            result = await run_agent_chat(
+                session_id=req.session_id,
+                user_message=sanitized_msg,
+                history=[h.model_dump() for h in req.history],
+                user_id=user.clerk_id,
+                ip_address=client_ip or ""
+            )
+            
+            # Stream the conversational response character by character
+            full_response = result.get("response", "")
+            words = full_response.split(" ")
+            for i, word in enumerate(words):
+                space = " " if i > 0 else ""
+                yield f"data: {json.dumps({'token': space + word})}\n\n"
+                await asyncio.sleep(0.03)
+
+            # Yield tool outputs and metadata at the very end
+            yield f"data: {json.dumps({
+                'done': True,
+                'tool_used': result.get('tool_used'),
+                'tool_output': result.get('tool_output'),
+                'is_web_augmented': result.get('is_web_augmented', False)
+            })}\n\n"
+            
+        except Exception as e:
+            logger.exception("Error in chat stream:")
+            yield f"data: {json.dumps({'error': str(e)})}\n\n"
+
+    return StreamingResponse(event_generator(), media_type="text/event-stream")
+
+
 @app.get("/graph-data/{session_id}", response_model=GraphDataResponse, tags=["graph"])
 async def graph_data(
     request: Request,
@@ -899,8 +1144,12 @@ async def graph_data(
         ip_address=get_client_ip(request),
     )
 
+    layout_json = None
+    if nb_row and "graph_layout_json" in nb_row.keys():
+        layout_json = nb_row["graph_layout_json"]
+
     try:
-        data = build_reactflow_data(session_id)
+        data = build_reactflow_data(session_id, layout_json=layout_json)
     except Exception as exc:
         logger.exception("Graph data build failed for session %s.", session_id)
         raise HTTPException(status_code=500, detail=f"Graph error: {exc}") from exc
@@ -915,6 +1164,145 @@ async def graph_data(
         nodes=[ReactFlowNode(**n) for n in data["nodes"]],
         edges=[ReactFlowEdge(**e) for e in data["edges"]],
     )
+
+
+@app.get("/api/notebooks/{session_id}/graph-rag", tags=["graph"])
+async def get_graph_rag_data(session_id: str, user: ClerkUser = Depends(get_current_user)):
+    """
+    Retrieve GraphRAG entity nodes and relationship edges persisted in SQLite
+    for rendering in our Three.js WebGL 3D Concept Galaxy.
+    """
+    row = db.get_notebook(session_id)
+    if not row:
+        raise HTTPException(status_code=404, detail="Notebook not found")
+    if row["clerk_id"] and row["clerk_id"] != user.clerk_id:
+        raise HTTPException(status_code=403, detail="Forbidden")
+
+    from engine.graph_store import get_graph_data
+    try:
+        data = get_graph_data(session_id)
+        return data
+    except Exception as exc:
+        logger.exception("Failed to fetch graph data for session %s:", session_id)
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+@app.websocket("/api/notebooks/{session_id}/podcast/live")
+async def live_podcast_websocket(
+    websocket: WebSocket,
+    session_id: str
+):
+    """
+    Bidirectional WebSocket connection proxying raw browser microphone audio PCM chunks
+    directly to the Gemini Multimodal Live API (gemini-2.0-flash-exp) and streaming
+    dynamic co-host audio PCM back.
+    """
+    await websocket.accept()
+    logger.info("Live podcast WebSocket connection established for session: %s", session_id)
+    
+    token = websocket.query_params.get("token")
+    user_id = None
+    
+    if os.getenv("ACUMEN_AUTH_BYPASS", "false").lower() == "true":
+        user_id = "dev_user"
+    elif token:
+        try:
+            from engine.auth import _verify_token
+            claims = await _verify_token(token)
+            user_id = claims.get("sub")
+        except Exception as auth_err:
+            logger.warning("WebSocket token verification failed: %s", auth_err)
+            await websocket.close(code=4003)
+            return
+            
+    if not user_id:
+        logger.warning("Unauthenticated WebSocket access attempt.")
+        await websocket.close(code=4003)
+        return
+        
+    row = db.get_notebook(session_id)
+    if row and row["clerk_id"] and row["clerk_id"] != user_id:
+        logger.warning("Unauthorised WebSocket access for user: %s", user_id)
+        await websocket.close(code=4003)
+        return
+
+    try:
+        from google import genai
+        from google.genai import types
+        
+        api_key = os.getenv("GOOGLE_API_KEY")
+        if not api_key:
+            logger.error("GOOGLE_API_KEY is not set.")
+            await websocket.close(code=4001)
+            return
+            
+        client = genai.Client(api_key=api_key, http_options={'api_version': 'v1alpha'})
+        
+        # Compile session document context to feed the hosts' instructions
+        try:
+            clusters = get_session(session_id)
+            context_str = ""
+            for cid, chunks in clusters.items():
+                context_str += f"\nTopic Cluster {cid}:\n" + "\n".join(chunks[:1])
+        except Exception:
+            context_str = "A technical research project."
+
+        system_instruction = (
+            "You are Host A (warm female co-host named Aoede) and Host B (casual male co-host named Puck), hosting a live interactive podcast overview.\n"
+            "Here is the context project content summaries:\n"
+            f"{context_str[:6000]}\n\n"
+            "You are speaking in a continuous live dialogue turn. Respond dynamically to the user (Host C) who will join the conversation live at the desk via mic.\n"
+            "Aoede focuses on precise tech stack details; Puck explains with playful, short analogies.\n"
+            "Speak naturally and keep your responses short, conversational, and energetic."
+        )
+
+        config = types.LiveConnectConfig(
+            response_modalities=[types.LiveModality.AUDIO],
+            speech_config=types.SpeechConfig(
+                voice_config=types.VoiceConfig(
+                    prebuilt_voice_config=types.PrebuiltVoiceConfig(voice_name="Aoede")
+                )
+            ),
+            system_instruction=types.Content(parts=[types.Part.from_text(system_instruction)])
+        )
+        
+        # Open persistent Live WebSocket connection to Gemini 2.0 Multimodal Live API
+        async with client.aio.live.connect(model="gemini-2.0-flash-exp", config=config) as session:
+            logger.info("Persistent Gemini Live Multimodal WebSocket session established.")
+            
+            async def forward_user_mic():
+                try:
+                    while True:
+                        data = await websocket.receive_bytes()
+                        await session.send(input={"data": data, "mime_type": "audio/pcm;rate=16000"})
+                except WebSocketDisconnect:
+                    pass
+                except Exception as forward_err:
+                    logger.error("Error forwarding user mic bytes: %s", forward_err)
+                    
+            async def forward_gemini_audio():
+                try:
+                    async for response in session.receive():
+                        server_content = response.server_content
+                        if server_content and server_content.model_turn:
+                            for part in server_content.model_turn.parts:
+                                if part.inline_data:
+                                    await websocket.send_bytes(part.inline_data.data)
+                except WebSocketDisconnect:
+                    pass
+                except Exception as recv_err:
+                    logger.error("Error forwarding Gemini live audio bytes: %s", recv_err)
+            
+            await asyncio.gather(forward_user_mic(), forward_gemini_audio())
+            
+    except WebSocketDisconnect:
+        logger.info("Live podcast WebSocket disconnected for session: %s", session_id)
+    except Exception as exc:
+        logger.exception("Gemini Multimodal Live proxy gateway crashed:")
+        try:
+            await websocket.close(code=1011)
+        except Exception:
+            pass
 
 
 @app.get("/generate-podcast/{session_id}", tags=["audio"])
@@ -939,10 +1327,112 @@ async def generate_podcast(session_id: str, user: ClerkUser = Depends(get_curren
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
 
+class PodcastJoinRequest(BaseModel):
+    message: str
+    history: List[Dict[str, str]] = []
+
+
+@app.post("/api/notebooks/{session_id}/podcast/join", tags=["audio"])
+async def join_podcast_conversation(
+    session_id: str,
+    req: PodcastJoinRequest,
+    user: ClerkUser = Depends(get_current_user)
+):
+    """
+    Simulated Live Join Conversation turn.
+    Accepts user question (as Host C) and returns Host A & B responses in script style.
+    """
+    row = db.get_notebook(session_id)
+    if not row:
+        raise HTTPException(status_code=404, detail="Notebook not found")
+    if row["clerk_id"] and row["clerk_id"] != user.clerk_id:
+        raise HTTPException(status_code=403, detail="Forbidden")
+
+    try:
+        from langchain_core.messages import HumanMessage
+        from langchain_google_genai import ChatGoogleGenerativeAI
+        
+        # Compile session context
+        clusters = get_session(session_id)
+        context_str = ""
+        for cid, chunks in clusters.items():
+            context_str += f"\nTopic Cluster {cid}:\n" + "\n".join(chunks[:2])
+            
+        history_str = ""
+        for line in req.history:
+            history_str += f"Host {line.get('host', 'C')}: {line.get('text', '')}\n"
+
+        prompt = (
+            "You are Host A (technical AI Explainer) and Host B (warm Analogy Specialist), co-hosting a live interactive podcast.\n"
+            "Here is the context document summaries:\n"
+            f"{context_str[:8000]}\n\n"
+            "Here is the dialogue history so far:\n"
+            f"{history_str}\n\n"
+            f"Host C (the user) joins the conversation live at the desk and says: '{req.message}'\n\n"
+            "Now, respond in character directly to Host C. Continue the interactive podcast dialogue naturally.\n"
+            "Keep the responses technical, concise, and professional.\n"
+            "Host A should address technical architecture, Host B should add a clear intuitive analogy.\n"
+            "Provide exactly 1 line from Host A and 1 line from Host B responding to their question.\n"
+            "Respond ONLY with a JSON array:\n"
+            '[{"host": "A", "text": "Explainer response"}, {"host": "B", "text": "Analogy response"}]'
+        )
+
+        from engine.fallback_chain import invoke_llm_with_fallback
+        
+        resp = await invoke_llm_with_fallback(
+            [HumanMessage(content=prompt)],
+            temperature=0.5,
+            max_tokens=512,
+            structured_json=True
+        )
+        
+        # Extract and parse JSON
+        from engine.wiki_swarm import _extract_json_block
+        raw = _extract_json_block(resp.content)
+        lines = json.loads(raw)
+        
+        # Premium Upgrade: Dynamic Voice Synthesis (v3.2)
+        import base64
+        from google import genai
+        from engine.audio_generator import synthesize_line_gemini, HAS_GENAI_SDK
+        
+        output_payload = []
+        api_key = os.getenv("GOOGLE_API_KEY")
+        
+        if HAS_GENAI_SDK and api_key:
+            try:
+                client = genai.Client(api_key=api_key)
+                for line in lines:
+                    host = line.get("host", "A").upper()
+                    text = line.get("text", "")
+                    voice_name = "Aoede" if host == "A" else "Puck"
+                    
+                    logger.info("Live Join desk synthesizing audio for Host %s...", host)
+                    audio_bytes = await synthesize_line_gemini(client, text, voice_name)
+                    audio_b64 = base64.b64encode(audio_bytes).decode("utf-8")
+                    
+                    output_payload.append({
+                        "host": host,
+                        "text": text,
+                        "audio": f"data:audio/wav;base64,{audio_b64}"
+                    })
+            except Exception as tts_err:
+                logger.error("Failed to synthesize dynamic voice response: %s", tts_err)
+                # Fallback to text-only if TTS fails
+                output_payload = [{"host": line.get("host", "A"), "text": line.get("text", ""), "audio": None} for line in lines]
+        else:
+            output_payload = [{"host": line.get("host", "A"), "text": line.get("text", ""), "audio": None} for line in lines]
+            
+        return {"response": output_payload}
+    except Exception as exc:
+        logger.exception("Podcast Live Join failed:")
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
 @app.post("/generate-audio/{session_id}", tags=["audio"])
 async def generate_audio(session_id: str, user: ClerkUser = Depends(get_current_user)):
     """
-    Generate a TTS audio file using Hugging Face's Inference API based on the 
+    Generate a premium dual-host TTS audio overview based on the 
     notebook's synthesized text, and return the .wav file.
     """
     row = db.get_notebook(session_id)
@@ -952,16 +1442,11 @@ async def generate_audio(session_id: str, user: ClerkUser = Depends(get_current_
         raise HTTPException(status_code=403, detail="Forbidden")
 
     try:
-        raw_clusters: Dict[str, List[str]] = json.loads(row["clusters_json"] or "{}")
-        # Condense the text for the TTS API (it has strict limits)
-        intro = "Welcome to the Acumen Podcast. Here are the key insights: "
-        body = []
-        for cid, chunks in list(raw_clusters.items())[:3]: # Take first 3 clusters
-            if chunks:
-                body.append(chunks[0][:150]) # Take first 150 chars of each
-        text_to_speak = intro + ". ".join(body)
-
-        file_path = await generate_podcast_audio(text_to_speak, session_id)
+        # 1. Generate the conversational podcast dialogue script
+        script = await generate_audio_script(session_id)
+        
+        # 2. Synthesize the dual-host audio conversation
+        file_path = await generate_podcast_audio(script, session_id)
         return FileResponse(path=file_path, media_type="audio/wav", filename=f"podcast_{session_id}.wav")
     except HTTPException:
         # Re-raise HTTPExceptions so FastAPI handles them with the correct status code
@@ -999,6 +1484,165 @@ async def get_notebooks(user: ClerkUser = Depends(get_current_user)) -> Notebook
     return NotebooksResponse(notebooks=notebooks)
 
 
+@app.delete("/api/notebooks/{session_id}", tags=["user"])
+async def delete_notebook(session_id: str, user: ClerkUser = Depends(get_current_user)):
+    """
+    Delete a specific notebook, its database record, and its ChromaDB records.
+    """
+    row = db.get_notebook(session_id)
+    if not row:
+        raise HTTPException(status_code=404, detail="Notebook not found")
+    if row["clerk_id"] and row["clerk_id"] != user.clerk_id:
+        raise HTTPException(status_code=403, detail="Forbidden")
+
+    # Delete from SQLite
+    with db._connect() as conn:
+        conn.execute("DELETE FROM notebooks WHERE session_id = ?", (session_id,))
+        conn.commit()
+
+    # Delete from ChromaDB
+    try:
+        from engine.wiki_swarm import get_wiki_collection
+        collection = get_wiki_collection()
+        # Fetch all ids belonging to this session
+        results = collection.get(where={"session_id": session_id}, include=[])
+        if results and results.get("ids"):
+            collection.delete(ids=results["ids"])
+            logger.info("Deleted %d ChromaDB docs for session %s.", len(results["ids"]), session_id)
+    except Exception as exc:
+        logger.error("Failed to delete ChromaDB docs for session %s: %s", session_id, exc)
+
+    # Evict from in-memory cache
+    if session_id in _sessions:
+        del _sessions[session_id]
+
+    return {"status": "success", "message": f"Notebook '{session_id}' successfully deleted."}
+
+
+@app.patch("/api/notebooks/{session_id}", tags=["user"])
+async def rename_notebook(
+    session_id: str,
+    payload: Dict[str, str],
+    user: ClerkUser = Depends(get_current_user)
+):
+    """
+    Rename a specific notebook.
+    """
+    title = payload.get("title")
+    if not title:
+        raise HTTPException(status_code=400, detail="Title field is required.")
+
+    row = db.get_notebook(session_id)
+    if not row:
+        raise HTTPException(status_code=404, detail="Notebook not found")
+    if row["clerk_id"] and row["clerk_id"] != user.clerk_id:
+        raise HTTPException(status_code=403, detail="Forbidden")
+
+    with db._connect() as conn:
+        conn.execute("UPDATE notebooks SET title = ? WHERE session_id = ?", (title, session_id))
+        conn.commit()
+
+    return {"status": "success", "message": f"Notebook successfully renamed to '{title}'."}
+
+
+@app.get("/api/notebooks/{session_id}/notes", tags=["user"])
+async def get_notebook_notes(session_id: str, user: ClerkUser = Depends(get_current_user)):
+    """
+    Get persistent notes, snippets, and links for a specific notebook.
+    """
+    row = db.get_notebook(session_id)
+    if not row:
+        raise HTTPException(status_code=404, detail="Notebook not found")
+    if row["clerk_id"] and row["clerk_id"] != user.clerk_id:
+        raise HTTPException(status_code=403, detail="Forbidden")
+
+    try:
+        notes = json.loads(row["notes_json"] or "{}")
+    except Exception:
+        notes = {}
+
+    try:
+        snippets = json.loads(row["snippets_json"] or "[]")
+    except Exception:
+        snippets = []
+
+    try:
+        links = json.loads(row["links_json"] or "[]")
+    except Exception:
+        links = []
+
+    return {
+        "notes": notes,
+        "snippets": snippets,
+        "links": links
+    }
+
+
+@app.patch("/api/notebooks/{session_id}/notes", tags=["user"])
+async def update_notebook_notes(
+    session_id: str,
+    payload: Dict[str, Any],
+    user: ClerkUser = Depends(get_current_user)
+):
+    """
+    Update persistent notes, snippets, or links for a specific notebook.
+    """
+    row = db.get_notebook(session_id)
+    if not row:
+        raise HTTPException(status_code=404, detail="Notebook not found")
+    if row["clerk_id"] and row["clerk_id"] != user.clerk_id:
+        raise HTTPException(status_code=403, detail="Forbidden")
+
+    if "notes" in payload:
+        db.update_notes(session_id, payload["notes"])
+    if "snippets" in payload:
+        db.update_snippets(session_id, payload["snippets"])
+    if "links" in payload:
+        db.update_links(session_id, payload["links"])
+
+    return {"status": "success", "message": "Notebook persistent workspace updated successfully."}
+
+
+@app.get("/api/notebooks/{session_id}/graph-layout", tags=["graph"])
+async def get_notebook_graph_layout(
+    session_id: str,
+    user: ClerkUser = Depends(get_current_user)
+):
+    """Retrieve saved node coordinate configurations."""
+    row = db.get_notebook(session_id)
+    if not row:
+        raise HTTPException(status_code=404, detail="Notebook not found")
+    if row["clerk_id"] and row["clerk_id"] != user.clerk_id:
+        raise HTTPException(status_code=403, detail="Forbidden")
+
+    try:
+        layout = json.loads(row["graph_layout_json"] or "{}")
+    except Exception:
+        layout = {}
+    return {"layout": layout}
+
+
+@app.patch("/api/notebooks/{session_id}/graph-layout", tags=["graph"])
+async def update_notebook_graph_layout(
+    session_id: str,
+    payload: Dict[str, Any],
+    user: ClerkUser = Depends(get_current_user)
+):
+    """Save persistent dragged node layout coordinates."""
+    row = db.get_notebook(session_id)
+    if not row:
+        raise HTTPException(status_code=404, detail="Notebook not found")
+    if row["clerk_id"] and row["clerk_id"] != user.clerk_id:
+        raise HTTPException(status_code=403, detail="Forbidden")
+
+    layout = payload.get("layout")
+    if layout is None:
+        raise HTTPException(status_code=400, detail="Layout payload is missing.")
+
+    db.update_graph_layout(session_id, layout)
+    return {"status": "success", "message": "Graph layout saved successfully."}
+
+
 @app.post("/api/notebooks/{session_id}/history", tags=["user"])
 async def update_notebook_history(
     session_id: str,
@@ -1016,3 +1660,433 @@ async def update_notebook_history(
     
     db.update_history(session_id, [h.model_dump() for h in history])
     return {"status": "success"}
+
+
+# ==============================================================================
+# PHASE 3 ENDPOINTS: Source Management, Artifact Studio, Sharing, & Flashcards
+# ==============================================================================
+
+# ------------------------------------------------------------------------------
+# 1. Source Management Panel (P3.3)
+# ------------------------------------------------------------------------------
+
+@app.get("/api/notebooks/{session_id}/sources", tags=["sources"])
+async def get_notebook_sources(
+    session_id: str,
+    user: ClerkUser = Depends(get_current_user)
+):
+    """List all individual sources ingested within a notebook."""
+    row = db.get_notebook(session_id)
+    if not row:
+        raise HTTPException(status_code=404, detail="Notebook not found")
+    if row["clerk_id"] and row["clerk_id"] != user.clerk_id:
+        raise HTTPException(status_code=403, detail="Forbidden")
+
+    try:
+        sources = json.loads(row["sources_json"] or "[]")
+    except Exception:
+        sources = []
+    return {"sources": sources}
+
+
+@app.delete("/api/notebooks/{session_id}/sources/{source_id}", tags=["sources"])
+async def delete_notebook_source(
+    session_id: str,
+    source_id: str,
+    background_tasks: BackgroundTasks,
+    user: ClerkUser = Depends(get_current_user)
+):
+    """
+    Delete a specific source, its text chunks in ChromaDB, and update 
+    the notebook clusters and wiki summaries reactively in the background.
+    """
+    row = db.get_notebook(session_id)
+    if not row:
+        raise HTTPException(status_code=404, detail="Notebook not found")
+    if row["clerk_id"] and row["clerk_id"] != user.clerk_id:
+        raise HTTPException(status_code=403, detail="Forbidden")
+
+    try:
+        sources = json.loads(row["sources_json"] or "[]")
+    except Exception:
+        sources = []
+
+    # Filter out the deleted source metadata
+    updated_sources = [s for s in sources if s.get("source_id") != source_id]
+    db.update_sources(session_id, updated_sources)
+
+    # 1. Delete matching text chunks from ChromaDB in the background
+    def clean_chroma_source_chunks():
+        try:
+            from engine.ingest_v2 import get_chunks_collection
+            chunks_col = get_chunks_collection()
+            res = chunks_col.get(where={"source_id": source_id}, include=[])
+            if res and res.get("ids"):
+                chunks_col.delete(ids=res["ids"])
+                logger.info("Deleted %d ChromaDB chunks for source %s", len(res["ids"]), source_id)
+        except Exception as exc:
+            logger.error("Failed to delete ChromaDB chunks for source %s: %s", source_id, exc)
+
+    background_tasks.add_task(clean_chroma_source_chunks)
+
+    # 2. Trigger reactive re-clustering and re-synthesis in the background
+    async def reprocess_remaining_sources():
+        try:
+            db.update_status(session_id, "synthesizing")
+            from engine.ingest_v2 import get_chunks_collection
+            from engine.wiki_swarm import run_wiki_swarm
+            import numpy as np
+            from sklearn.cluster import KMeans
+            from sklearn.preprocessing import normalize
+            from engine.embedder import get_document_embedder
+            
+            chunks_col = get_chunks_collection()
+            res = chunks_col.get(where={"session_id": session_id, "raptor_level": 0}, include=["documents"])
+            leaf_texts = res.get("documents", [])
+            
+            if not leaf_texts:
+                # No sources left, empty clusters and status
+                db.save_notebook(session_id, row["title"], {}, user.clerk_id, source_type=row["source_type"])
+                db.update_status(session_id, "completed")
+                # Clear wiki pages
+                from engine.wiki_swarm import get_wiki_collection
+                wiki_col = get_wiki_collection()
+                wiki_res = wiki_col.get(where={"session_id": session_id}, include=[])
+                if wiki_res and wiki_res.get("ids"):
+                    wiki_col.delete(ids=wiki_res["ids"])
+                return
+
+            n_kmeans_clusters = min(5, len(leaf_texts))
+            if len(leaf_texts) < n_kmeans_clusters:
+                legacy_clusters = {0: leaf_texts}
+            else:
+                embedder = get_document_embedder()
+                leaf_embeddings = await embedder.aembed_documents(leaf_texts)
+                leaf_embeddings_norm = normalize(np.array(leaf_embeddings, dtype=np.float32), norm="l2")
+                
+                kmeans = KMeans(n_clusters=n_kmeans_clusters, random_state=42, n_init="auto")
+                labels = kmeans.fit_predict(leaf_embeddings_norm)
+                
+                legacy_clusters = {i: [] for i in range(n_kmeans_clusters)}
+                for chunk, label in zip(leaf_texts, labels.tolist()):
+                    legacy_clusters[int(label)].append(chunk)
+            
+            db.save_notebook(session_id, row["title"], legacy_clusters, user.clerk_id, source_type=row["source_type"])
+            
+            # Clear old wiki pages and re-synthesis
+            from engine.wiki_swarm import get_wiki_collection
+            wiki_col = get_wiki_collection()
+            wiki_res = wiki_col.get(where={"session_id": session_id}, include=[])
+            if wiki_res and wiki_res.get("ids"):
+                wiki_col.delete(ids=wiki_res["ids"])
+                
+            await run_wiki_swarm(session_id=session_id, clusters=legacy_clusters)
+            db.update_status(session_id, "completed")
+            logger.info("Reactive re-synthesis completed after deleting source %s", source_id)
+        except Exception as e:
+            logger.exception("Reactive source deletion re-synthesis failed: %s", e)
+            db.update_status(session_id, "error")
+
+    background_tasks.add_task(reprocess_remaining_sources)
+    return {"status": "success", "message": f"Source '{source_id}' deletion enqueued."}
+
+
+# ------------------------------------------------------------------------------
+# 2. Artifact Studio Panel (P3.2)
+# ------------------------------------------------------------------------------
+
+@app.get("/generate-faq/{session_id}", tags=["artifacts"])
+async def get_faq_artifact(
+    session_id: str,
+    user: ClerkUser = Depends(get_current_user)
+):
+    """Generate FAQ Study Guide document."""
+    row = db.get_notebook(session_id)
+    if not row:
+        raise HTTPException(status_code=404, detail="Notebook not found")
+    if row["clerk_id"] and row["clerk_id"] != user.clerk_id:
+        raise HTTPException(status_code=403, detail="Forbidden")
+
+    try:
+        from engine.artifact_generator import generate_faq
+        content = await generate_faq(session_id)
+        return {"faq": content}
+    except Exception as exc:
+        logger.exception("FAQ generation failed for session %s: %s", session_id, exc)
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+@app.get("/generate-study-guide/{session_id}", tags=["artifacts"])
+async def get_study_guide_artifact(
+    session_id: str,
+    user: ClerkUser = Depends(get_current_user)
+):
+    """Generate premium academic Study Guide."""
+    row = db.get_notebook(session_id)
+    if not row:
+        raise HTTPException(status_code=404, detail="Notebook not found")
+    if row["clerk_id"] and row["clerk_id"] != user.clerk_id:
+        raise HTTPException(status_code=403, detail="Forbidden")
+
+    try:
+        from engine.artifact_generator import generate_study_guide
+        content = await generate_study_guide(session_id)
+        return {"study_guide": content}
+    except Exception as exc:
+        logger.exception("Study Guide generation failed for session %s: %s", session_id, exc)
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+@app.get("/generate-briefing/{session_id}", tags=["artifacts"])
+async def get_briefing_artifact(
+    session_id: str,
+    user: ClerkUser = Depends(get_current_user)
+):
+    """Generate strategic Executive Briefing Document."""
+    row = db.get_notebook(session_id)
+    if not row:
+        raise HTTPException(status_code=404, detail="Notebook not found")
+    if row["clerk_id"] and row["clerk_id"] != user.clerk_id:
+        raise HTTPException(status_code=403, detail="Forbidden")
+
+    try:
+        from engine.artifact_generator import generate_briefing
+        content = await generate_briefing(session_id)
+        return {"briefing": content}
+    except Exception as exc:
+        logger.exception("Briefing generation failed for session %s: %s", session_id, exc)
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+@app.get("/generate-timeline/{session_id}", tags=["artifacts"])
+async def get_timeline_artifact(
+    session_id: str,
+    user: ClerkUser = Depends(get_current_user)
+):
+    """Generate chronological event Timeline."""
+    row = db.get_notebook(session_id)
+    if not row:
+        raise HTTPException(status_code=404, detail="Notebook not found")
+    if row["clerk_id"] and row["clerk_id"] != user.clerk_id:
+        raise HTTPException(status_code=403, detail="Forbidden")
+
+    try:
+        from engine.artifact_generator import generate_timeline
+        content = await generate_timeline(session_id)
+        return {"timeline": content}
+    except Exception as exc:
+        logger.exception("Timeline generation failed for session %s: %s", session_id, exc)
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+@app.get("/generate-mindmap/{session_id}", tags=["artifacts"])
+async def get_mindmap_artifact(
+    session_id: str,
+    user: ClerkUser = Depends(get_current_user)
+):
+    """Generate structural JSON Mindmap for reactive node maps."""
+    row = db.get_notebook(session_id)
+    if not row:
+        raise HTTPException(status_code=404, detail="Notebook not found")
+    if row["clerk_id"] and row["clerk_id"] != user.clerk_id:
+        raise HTTPException(status_code=403, detail="Forbidden")
+
+    try:
+        from engine.artifact_generator import generate_mindmap
+        content = await generate_mindmap(session_id)
+        return {"mindmap": content}
+    except Exception as exc:
+        logger.exception("Mindmap generation failed for session %s: %s", session_id, exc)
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+@app.post("/api/notebooks/{session_id}/export", tags=["artifacts"])
+async def export_notebook_pack(
+    session_id: str,
+    background_tasks: BackgroundTasks,
+    user: ClerkUser = Depends(get_current_user)
+):
+    """Compile all notes, outlines, FAQs, study guides, timelines, and mindmaps into a single ZIP file."""
+    row = db.get_notebook(session_id)
+    if not row:
+        raise HTTPException(status_code=404, detail="Notebook not found")
+    if row["clerk_id"] and row["clerk_id"] != user.clerk_id:
+        raise HTTPException(status_code=403, detail="Forbidden")
+
+    import zipfile
+    import time
+    
+    temp_dir = os.path.join(DATA_DIR, "temp")
+    os.makedirs(temp_dir, exist_ok=True)
+    zip_path = os.path.join(temp_dir, f"acumen_export_{session_id}.zip")
+    
+    try:
+        from engine.artifact_generator import (
+            generate_faq, generate_study_guide, generate_briefing, generate_timeline, generate_mindmap
+        )
+        
+        # Compile all artifacts synchronously (or run parallel if needed)
+        faq_md = await generate_faq(session_id)
+        study_guide_md = await generate_study_guide(session_id)
+        briefing_md = await generate_briefing(session_id)
+        timeline_md = await generate_timeline(session_id)
+        mindmap_json = await generate_mindmap(session_id)
+        
+        # User notes
+        notes_dict = json.loads(row["notes_json"] or "{}")
+        notes_md = "# Acumen Persistent User Notes\n\n"
+        if notes_dict:
+            for cluster_id, text in notes_dict.items():
+                notes_md += f"## Topic Cluster {cluster_id}\n{text}\n\n"
+        else:
+            notes_md += "*No persistent notes saved for this notebook yet.*"
+            
+        with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as zip_file:
+            readme = f"# ACUMEN Research Pack\n\nNotebook Title: {row['title']}\nExported: {time.strftime('%Y-%m-%d %H:%M:%S UTC', time.gmtime())}\n"
+            zip_file.writestr("README.md", readme)
+            zip_file.writestr("FAQ.md", faq_md)
+            zip_file.writestr("Study_Guide.md", study_guide_md)
+            zip_file.writestr("Executive_Briefing.md", briefing_md)
+            zip_file.writestr("Timeline.md", timeline_md)
+            zip_file.writestr("User_Notes.md", notes_md)
+            zip_file.writestr("Mindmap.json", json.dumps(mindmap_json, indent=2))
+            zip_file.writestr("Wiki_Pages_Raw.json", row["clusters_json"] or "{}")
+            
+        def clean_temp_zip():
+            try:
+                if os.path.exists(zip_path):
+                    os.remove(zip_path)
+            except Exception:
+                pass
+                
+        background_tasks.add_task(clean_temp_zip)
+        return FileResponse(path=zip_path, media_type="application/zip", filename=f"acumen_research_pack_{session_id}.zip")
+        
+    except Exception as e:
+        logger.exception("Failed to generate export ZIP for %s: %s", session_id, e)
+        raise HTTPException(status_code=500, detail=f"Export generation failed: {str(e)}")
+
+
+# ------------------------------------------------------------------------------
+# 3. Persistent Flashcards Progress (P3.4)
+# ------------------------------------------------------------------------------
+
+@app.get("/api/notebooks/{session_id}/flashcard-progress", tags=["flashcards"])
+async def get_flashcard_progress(
+    session_id: str,
+    user: ClerkUser = Depends(get_current_user)
+):
+    """Retrieve flashcard known/review states."""
+    row = db.get_notebook(session_id)
+    if not row:
+        raise HTTPException(status_code=404, detail="Notebook not found")
+    if row["clerk_id"] and row["clerk_id"] != user.clerk_id:
+        raise HTTPException(status_code=403, detail="Forbidden")
+
+    try:
+        progress = json.loads(row["flashcard_progress_json"] or "{}")
+    except Exception:
+        progress = {}
+    return {"progress": progress}
+
+
+@app.patch("/api/notebooks/{session_id}/flashcard-progress", tags=["flashcards"])
+async def update_flashcard_progress(
+    session_id: str,
+    payload: Dict[str, Any],
+    user: ClerkUser = Depends(get_current_user)
+):
+    """Save flashcard known/review states permanently."""
+    row = db.get_notebook(session_id)
+    if not row:
+        raise HTTPException(status_code=404, detail="Notebook not found")
+    if row["clerk_id"] and row["clerk_id"] != user.clerk_id:
+        raise HTTPException(status_code=403, detail="Forbidden")
+
+    progress = payload.get("progress")
+    if progress is None:
+        raise HTTPException(status_code=400, detail="Progress payload missing")
+
+    db.update_flashcard_progress(session_id, progress)
+    return {"status": "success", "message": "Flashcard progress successfully persistent."}
+
+
+# ------------------------------------------------------------------------------
+# 4. Notebook Secure Sharing (P3.5)
+# ------------------------------------------------------------------------------
+
+@app.post("/api/notebooks/{session_id}/share", tags=["sharing"])
+async def create_share_link(
+    session_id: str,
+    user: ClerkUser = Depends(get_current_user)
+):
+    """Generate a cryptographically secure token enabling read-only access."""
+    row = db.get_notebook(session_id)
+    if not row:
+        raise HTTPException(status_code=404, detail="Notebook not found")
+    if row["clerk_id"] and row["clerk_id"] != user.clerk_id:
+        raise HTTPException(status_code=403, detail="Forbidden")
+
+    token = str(uuid.uuid4())
+    db.update_share_token(session_id, token)
+    return {"share_link": f"/share/{token}", "token": token}
+
+
+@app.delete("/api/notebooks/{session_id}/share", tags=["sharing"])
+async def revoke_share_link(
+    session_id: str,
+    user: ClerkUser = Depends(get_current_user)
+):
+    """Revoke sharing capabilities instantly, resetting the token."""
+    row = db.get_notebook(session_id)
+    if not row:
+        raise HTTPException(status_code=404, detail="Notebook not found")
+    if row["clerk_id"] and row["clerk_id"] != user.clerk_id:
+        raise HTTPException(status_code=403, detail="Forbidden")
+
+    db.update_share_token(session_id, None)
+    return {"status": "success", "message": "Share link successfully revoked."}
+
+
+@app.get("/api/share/{token}", tags=["sharing"])
+async def get_shared_notebook(token: str):
+    """Securely fetch and read a shared notebook payload without authentication checks."""
+    with db._connect() as conn:
+        row = conn.execute(
+            "SELECT * FROM notebooks WHERE share_token = ?", (token,)
+        ).fetchone()
+
+    if not row:
+        raise HTTPException(status_code=404, detail="Shared notebook not found or share link has been revoked.")
+
+    session_id = row["session_id"]
+    
+    # Compile wiki pages for read-only view
+    from engine.wiki_swarm import get_wiki_collection
+    try:
+        wiki_col = get_wiki_collection()
+        wiki_res = wiki_col.get(where={"session_id": session_id})
+        wiki_pages = []
+        if wiki_res and wiki_res.get("documents"):
+            for doc in wiki_res["documents"]:
+                try:
+                    wiki_pages.append(json.loads(doc))
+                except Exception:
+                    pass
+    except Exception:
+        wiki_pages = []
+
+    # Compile user notes
+    try:
+        notes = json.loads(row["notes_json"] or "{}")
+    except Exception:
+        notes = {}
+
+    return {
+        "title": row["title"],
+        "session_id": session_id,
+        "created_at": row["created_at"],
+        "source_type": row["source_type"],
+        "wiki_pages": wiki_pages,
+        "notes": notes
+    }

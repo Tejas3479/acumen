@@ -33,6 +33,8 @@ from pydantic import BaseModel, Field
 import time
 from typing_extensions import TypedDict
 
+from engine.fallback_chain import invoke_llm_with_fallback, get_sync_llm_with_fallback
+
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
@@ -108,7 +110,6 @@ class SwarmState(TypedDict):
     cluster_ids: List[int]
     current_index: int
     wiki_pages: List[Dict[str, Any]]
-    errors: List[str]
 
 
 # ---------------------------------------------------------------------------
@@ -162,10 +163,7 @@ def _extract_json_block(text: Any) -> str:
             
     return raw.strip()
 
-def _synthesize_cluster(cluster_id: int, chunks: List[str]) -> WikiPage:
-    model_name = os.getenv("ACUMEN_LLM_MODEL", "gemini-2.5-flash")
-    llm = ChatGoogleGenerativeAI(model=model_name, temperature=0.3, max_tokens=1024)
-
+async def _synthesize_cluster(cluster_id: int, chunks: List[str]) -> WikiPage:
     # Step 2: Context Window Management (15,000 chars)
     combined = "\n\n---\n\n".join(chunks)
     if len(combined) > 15000:
@@ -187,7 +185,12 @@ def _synthesize_cluster(cluster_id: int, chunks: List[str]) -> WikiPage:
                     )
                 ),
             ]
-            resp = llm.invoke(messages)
+            resp = await invoke_llm_with_fallback(
+                messages,
+                temperature=0.3,
+                max_tokens=1024,
+                structured_json=True
+            )
             raw = _extract_json_block(resp.content)
 
             try:
@@ -201,7 +204,12 @@ def _synthesize_cluster(cluster_id: int, chunks: List[str]) -> WikiPage:
                     f"{{'topic_title': '...', 'summary': '...', 'key_terms': [...], 'insights': [...]}}.\n\n"
                     f"Malformed output: {raw}"
                 )
-                resp = llm.invoke([HumanMessage(content=correction_prompt)])
+                resp = await invoke_llm_with_fallback(
+                    [HumanMessage(content=correction_prompt)],
+                    temperature=0.3,
+                    max_tokens=1024,
+                    structured_json=True
+                )
                 raw = _extract_json_block(resp.content)
                 data = json.loads(raw)
                 return WikiPage(cluster_id=cluster_id, **data)
@@ -210,7 +218,7 @@ def _synthesize_cluster(cluster_id: int, chunks: List[str]) -> WikiPage:
             last_error = e
             logger.warning("Cluster %d: Synthesis attempt %d failed: %s", cluster_id, attempt + 1, e)
             if attempt < max_retries - 1:
-                time.sleep(2) # Step 1: Wait 2 seconds
+                await asyncio.sleep(2) # Step 1: Wait 2 seconds (non-blocking)
             continue
 
     # Step 3: Final Fallback (Derived from first 5 words)
@@ -256,12 +264,8 @@ async def synthesize_wiki_pages(state: SwarmState) -> SwarmState:
 
         logger.info("Synthesizing cluster %d (%d chunks) ...", cluster_id, len(clusters[cluster_id]))
         
-        # Run synthesis in a separate thread if not already async
-        # Since _synthesize_cluster is sync (uses LangChain's .invoke), 
-        # we wrap it to avoid blocking the event loop.
-        loop = asyncio.get_running_loop()
         try:
-            wiki_page = await loop.run_in_executor(None, _synthesize_cluster, cluster_id, clusters[cluster_id])
+            wiki_page = await _synthesize_cluster(cluster_id, clusters[cluster_id])
             return wiki_page.model_dump()
         except Exception as e:
             logger.error("Synthesis failed for cluster %d: %s", cluster_id, e)
@@ -325,9 +329,6 @@ def store_wiki_page(state: SwarmState) -> SwarmState:
 # Router — loop or END
 # ---------------------------------------------------------------------------
 
-def router(state: SwarmState) -> str:
-    # Since we synthesize all at once now, we just END
-    return END
 
 
 # ---------------------------------------------------------------------------
@@ -343,11 +344,7 @@ def _build_graph():
     g.add_node("store_wiki_page", store_wiki_page)
     g.set_entry_point("synthesize_wiki_pages")
     g.add_edge("synthesize_wiki_pages", "store_wiki_page")
-    g.add_conditional_edges(
-        "store_wiki_page",
-        router,
-        {"synthesize_wiki_pages": "synthesize_wiki_pages", END: END},
-    )
+    g.add_edge("store_wiki_page", END)
     return g.compile()
 
 
@@ -377,14 +374,11 @@ async def run_wiki_swarm(
         "cluster_ids": sorted(clusters.keys()),
         "current_index": 0,
         "wiki_pages": [],
-        "errors": [],
     }
 
     final = await get_graph().ainvoke(initial)
 
     pages = final["wiki_pages"]
-    if final.get("errors"):
-        logger.warning("Swarm errors: %s", final["errors"])
     logger.info("=== Wiki Swarm COMPLETE — %d pages stored ===", len(pages))
     return pages
 
@@ -393,7 +387,7 @@ async def run_wiki_swarm(
 # ReactFlow graph-data helper
 # ---------------------------------------------------------------------------
 
-def build_reactflow_data(session_id: str) -> Dict[str, Any]:
+def build_reactflow_data(session_id: str, layout_json: Optional[str] = None) -> Dict[str, Any]:
     """
     Query ChromaDB for all wiki pages belonging to this session and
     return a ReactFlow-compatible payload:
@@ -403,37 +397,54 @@ def build_reactflow_data(session_id: str) -> Dict[str, Any]:
         "edges": [ { id, source, target, label, animated } … ]
       }
 
-    Node positions are arranged in a circle.
-    Edges are generated by an LLM call (1-2 topic relationships).
+    Node positions are restored from SQLite, or fallback to circle layout.
+    Edges are generated by computing cosine similarity (>0.35) and batch labeling via LLM.
     """
     collection = get_wiki_collection()
 
-    # Fetch all documents for this session
+    # Fetch all documents for this session, including embeddings
     results = collection.get(
         where={"session_id": session_id},
-        include=["metadatas", "documents"],
+        include=["metadatas", "documents", "embeddings"],
     )
 
     metadatas: List[Dict] = results.get("metadatas") or []
     documents: List[str] = results.get("documents") or []
+    embeddings: List[List[float]] = results.get("embeddings") or []
 
     if not metadatas:
         return {"nodes": [], "edges": []}
 
     n = len(metadatas)
 
-    # --- Build nodes in a circle layout ---
+    # Parse saved layout if available
+    layout_coords = {}
+    if layout_json:
+        try:
+            layout_coords = json.loads(layout_json)
+        except Exception as exc:
+            logger.warning("Failed to parse graph layout JSON: %s", exc)
+
+    # --- Build nodes in a layout ---
     radius = 320
     cx, cy = 450, 350
     nodes = []
     for i, (meta, doc) in enumerate(zip(metadatas, documents)):
-        angle = (2 * math.pi * i) / n
-        x = round(cx + radius * math.cos(angle), 1)
-        y = round(cy + radius * math.sin(angle), 1)
-
         cid = meta.get("cluster_id", i)
+        node_id = f"cluster_{cid}"
+
+        # Try to restore position from database
+        if node_id in layout_coords:
+            x = layout_coords[node_id].get("x", cx)
+            y = layout_coords[node_id].get("y", cy)
+        else:
+            # Circle layout fallback
+            angle = (2 * math.pi * i) / n
+            x = round(cx + radius * math.cos(angle), 1)
+            y = round(cy + radius * math.sin(angle), 1)
+
         nodes.append({
-            "id": f"cluster_{cid}",
+            "id": node_id,
             "type": "topicNode",           # custom node type on frontend
             "position": {"x": x, "y": y},
             "data": {
@@ -445,45 +456,88 @@ def build_reactflow_data(session_id: str) -> Dict[str, Any]:
             },
         })
 
-    # --- Ask LLM to define 1-2 relationships between topics ---
-    topic_list = "\n".join(
-        f"- cluster_{m.get('cluster_id', i)}: {m.get('topic_name', '')}"
-        for i, m in enumerate(metadatas)
-    )
+    # --- Compute Pairwise Cosine Similarities between Wiki Page Embeddings ---
+    pairs_above_threshold = []
+    import numpy as np
 
-    edge_prompt = (
-        "Given these document topic nodes:\n"
-        f"{topic_list}\n\n"
-        "Define 2 meaningful conceptual relationships (edges) between them.\n"
-        "Respond with ONLY a JSON array — no markdown:\n"
-        '[{"source": "cluster_X", "target": "cluster_Y", "label": "short relationship"}, ...]'
-    )
+    if embeddings and len(embeddings) == n:
+        for i in range(n):
+            for j in range(i + 1, n):
+                v_i = np.array(embeddings[i])
+                v_j = np.array(embeddings[j])
+                dot = np.dot(v_i, v_j)
+                norm_i = np.linalg.norm(v_i)
+                norm_j = np.linalg.norm(v_j)
+                similarity = dot / (norm_i * norm_j) if norm_i > 0 and norm_j > 0 else 0.0
+
+                if similarity > 0.35:
+                    pairs_above_threshold.append({
+                        "i": i,
+                        "j": j,
+                        "source_id": f"cluster_{metadatas[i].get('cluster_id', i)}",
+                        "target_id": f"cluster_{metadatas[j].get('cluster_id', j)}",
+                        "source_name": metadatas[i].get("topic_name", f"Topic {metadatas[i].get('cluster_id', i)}"),
+                        "target_name": metadatas[j].get("topic_name", f"Topic {metadatas[j].get('cluster_id', j)}"),
+                        "source_summary": metadatas[i].get("summary", ""),
+                        "target_summary": metadatas[j].get("summary", ""),
+                        "similarity": float(similarity)
+                    })
 
     edges = []
-    try:
-        model_name = os.getenv("ACUMEN_LLM_MODEL", "gemini-2.5-flash")
-        llm = ChatGoogleGenerativeAI(model=model_name, temperature=0.2, max_tokens=256)
-        resp = llm.invoke([HumanMessage(content=edge_prompt)])
-        raw = _extract_json_block(resp.content)
-        raw_edges: List[Dict] = json.loads(raw)
+    if pairs_above_threshold:
+        # Batch label generation via LLM
+        pairs_str = "\n".join(
+            f"- Pair {idx}: '{p['source_name']}' (ID: {p['source_id']}) <-> '{p['target_name']}' (ID: {p['target_id']})\n"
+            f"  Context A: {p['source_summary']}\n"
+            f"  Context B: {p['target_summary']}"
+            for idx, p in enumerate(pairs_above_threshold)
+        )
 
-        for i, e in enumerate(raw_edges[:2]):   # cap at 2
+        edge_prompt = (
+            "You are an expert technical knowledge graph labeler. Your task is to annotate conceptual relationships between topics.\n"
+            "Below is a list of topic pairs that are semantically connected. For each pair, generate a concise, high-impact relationship label (3-5 words) that describes how they connect.\n\n"
+            f"Connected Pairs:\n{pairs_str}\n\n"
+            "Respond with ONLY a valid JSON array matching this schema:\n"
+            '[{"source": "topic_id_1", "target": "topic_id_2", "label": "3-5 word relationship"}, ...]\n\n'
+            "Keep labels professional, exact, and lowercase (e.g. 'extends architecture', 'optimizes indexing', 'manages persistence'). Return ONLY the JSON array without markdown code blocks."
+        )
+
+        try:
+            llm = get_sync_llm_with_fallback(temperature=0.1, max_tokens=1024, structured_json=True)
+            resp = llm.invoke([HumanMessage(content=edge_prompt)])
+            raw = _extract_json_block(resp.content)
+            raw_edges: List[Dict] = json.loads(raw)
+
+            for idx, e in enumerate(raw_edges):
+                edges.append({
+                    "id": f"e_{e['source']}_{e['target']}",
+                    "source": e["source"],
+                    "target": e["target"],
+                    "label": e.get("label", "semantically related"),
+                    "animated": True,
+                    "style": {"stroke": "#7c3aed"},
+                })
+        except Exception as exc:
+            logger.warning("Batch edge labeling failed: %s. Using default labels.", exc)
+            for p in pairs_above_threshold:
+                edges.append({
+                    "id": f"e_{p['source_id']}_{p['target_id']}",
+                    "source": p["source_id"],
+                    "target": p["target_id"],
+                    "label": "semantically related",
+                    "animated": True,
+                    "style": {"stroke": "#7c3aed"},
+                })
+    else:
+        logger.info("No semantic connections found above 0.35. Using consecutive fallback edges.")
+        for i in range(min(3, n - 1)):
+            source_id = f"cluster_{metadatas[i].get('cluster_id', i)}"
+            target_id = f"cluster_{metadatas[i+1].get('cluster_id', i+1)}"
             edges.append({
-                "id": f"e{i}_{e['source']}_{e['target']}",
-                "source": e["source"],
-                "target": e["target"],
-                "label": e.get("label", ""),
-                "animated": True,
-                "style": {"stroke": "#7c3aed"},
-            })
-    except Exception as exc:
-        logger.warning("Edge generation failed: %s — using fallback edge.", exc)
-        if len(nodes) >= 2:
-            edges.append({
-                "id": "e0_fallback",
-                "source": nodes[0]["id"],
-                "target": nodes[1]["id"],
-                "label": "related",
+                "id": f"e_{source_id}_{target_id}",
+                "source": source_id,
+                "target": target_id,
+                "label": "semantically related",
                 "animated": True,
                 "style": {"stroke": "#7c3aed"},
             })

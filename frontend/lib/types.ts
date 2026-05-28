@@ -8,8 +8,6 @@ export interface ClusterPreview {
 
 export interface UploadResponse {
   message: string;
-  total_chunks: number;
-  clusters: ClusterPreview[];
   session_id: string;
 }
 
@@ -21,11 +19,6 @@ export interface WikiPage {
   insights: string[];
 }
 
-export interface SynthesizeResponse {
-  session_id: string;
-  wiki_pages: WikiPage[];
-  errors: string[];
-}
 
 export interface StatusResponse {
   session_id: string;
@@ -33,10 +26,6 @@ export interface StatusResponse {
   clusters?: ClusterPreview[];
 }
 
-export interface NotebookStatus {
-  processing: boolean;
-  error: boolean;
-}
 
 export interface NodeData {
   label: string;
@@ -87,10 +76,6 @@ export interface Notebook {
   status?: "processing" | "completed" | "error" | "synthesizing" | "ingesting";
 }
 
-export interface ChatRequest {
-  message: string;
-  history: ChatMessage[];
-}
 
 export interface ChatResponse {
   response: string;

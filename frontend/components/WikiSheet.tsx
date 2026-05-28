@@ -1,6 +1,7 @@
+/* eslint-disable @typescript-eslint/no-explicit-any, react-hooks/exhaustive-deps */
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import {
   Sheet,
   SheetContent,
@@ -23,26 +24,36 @@ import {
   Copy,
   Check,
   Download,
+  Loader2,
 } from "lucide-react";
 import type { WikiPage } from "@/lib/types";
+
+const API_BASE_URL = process.env.NEXT_PUBLIC_BACKEND_URL || "http://127.0.0.1:8000";
 
 interface WikiSheetProps {
   page: WikiPage | null;
   open: boolean;
   onClose: () => void;
   onObsidianLink: (clusterId: number, noteText: string) => void;
+  sessionId: string;
 }
 
 // ── Code Snippets Tab ────────────────────────────────────────────────────────
-function CodeSnippetsTab() {
-  const [snippets, setSnippets] = useState([{ lang: "python", code: "" }]);
+interface CodeSnippetsTabProps {
+  snippets: { lang: string; code: string }[];
+  onChange: (snippets: { lang: string; code: string }[]) => void;
+}
+
+function CodeSnippetsTab({ snippets, onChange }: CodeSnippetsTabProps) {
   const [copied, setCopied] = useState<number | null>(null);
 
-  const add = () => setSnippets((s) => [...s, { lang: "python", code: "" }]);
-  const remove = (i: number) => setSnippets((s) => s.filter((_, j) => j !== i));
+  const add = () => onChange([...snippets, { lang: "python", code: "" }]);
+  const remove = (i: number) => onChange(snippets.filter((_, j) => j !== i));
 
-  const update = (i: number, field: "lang" | "code", val: string) =>
-    setSnippets((s) => s.map((sn, j) => (j === i ? { ...sn, [field]: val } : sn)));
+  const update = (i: number, field: "lang" | "code", val: string) => {
+    const updated = snippets.map((sn, j) => (j === i ? { ...sn, [field]: val } : sn));
+    onChange(updated);
+  };
 
   const copy = (i: number, code: string) => {
     navigator.clipboard.writeText(code);
@@ -63,11 +74,10 @@ function CodeSnippetsTab() {
       </div>
 
       {snippets.map((sn, i) => (
-        <div key={i} className="rounded-xl border border-white/10 overflow-hidden">
+        <div key={i} className="rounded-xl border border-white/10 overflow-hidden bg-black/25">
           {/* Snippet toolbar */}
           <div
-            className="flex items-center gap-2 px-3 py-1.5 border-b border-white/8"
-            style={{ background: "rgba(255,255,255,0.03)" }}
+            className="flex items-center gap-2 px-3 py-1.5 border-b border-white/8 bg-white/[0.02]"
           >
             <Code2 className="w-3 h-3 text-slate-500" />
             <select
@@ -76,7 +86,7 @@ function CodeSnippetsTab() {
               className="text-[11px] bg-transparent text-slate-400 outline-none cursor-pointer"
             >
               {["python", "typescript", "javascript", "sql", "bash", "json", "yaml"].map((l) => (
-                <option key={l} value={l} className="bg-[#111118]">{l}</option>
+                <option key={l} value={l} className="bg-[#111118] text-slate-300">{l}</option>
               ))}
             </select>
             <span className="ml-auto flex items-center gap-1.5">
@@ -108,23 +118,32 @@ function CodeSnippetsTab() {
 }
 
 // ── External Links Tab ───────────────────────────────────────────────────────
-function ExternalLinksTab() {
-  const [links, setLinks] = useState<{ url: string; label: string }[]>([]);
+interface ExternalLinksTabProps {
+  links: { url: string; label: string }[];
+  onChange: (links: { url: string; label: string }[]) => void;
+}
+
+function ExternalLinksTab({ links, onChange }: ExternalLinksTabProps) {
   const [url, setUrl] = useState("");
   const [label, setLabel] = useState("");
 
   const add = () => {
     if (!url.trim()) return;
     const safeUrl = url.startsWith("http") ? url : `https://${url}`;
-    setLinks((l) => [...l, { url: safeUrl, label: label || safeUrl }]);
+    const updated = [...links, { url: safeUrl, label: label || safeUrl }];
+    onChange(updated);
     setUrl("");
     setLabel("");
+  };
+
+  const remove = (i: number) => {
+    onChange(links.filter((_, j) => j !== i));
   };
 
   return (
     <div className="space-y-4">
       {/* Add form */}
-      <div className="rounded-xl border border-white/10 p-4 space-y-2.5">
+      <div className="rounded-xl border border-white/10 p-4 space-y-2.5 bg-black/20">
         <p className="text-[11px] text-slate-500">Add reference links for this topic</p>
         <input
           value={label}
@@ -175,7 +194,7 @@ function ExternalLinksTab() {
                 {lk.label}
               </a>
               <button
-                onClick={() => setLinks((l) => l.filter((_, j) => j !== i))}
+                onClick={() => remove(i)}
                 className="opacity-0 group-hover:opacity-100 transition-opacity"
               >
                 <X className="w-3.5 h-3.5 text-slate-600 hover:text-red-400 transition-colors" />
@@ -189,16 +208,127 @@ function ExternalLinksTab() {
 }
 
 // ── Main WikiSheet ───────────────────────────────────────────────────────────
-export default function WikiSheet({ page, open, onClose, onObsidianLink }: WikiSheetProps) {
+export default function WikiSheet({ page, open, onClose, onObsidianLink, sessionId }: WikiSheetProps) {
   const [note, setNote] = useState("");
+  const [snippets, setSnippets] = useState<{ lang: string; code: string }[]>([]);
+  const [links, setLinks] = useState<{ url: string; label: string }[]>([]);
+  const [loading, setLoading] = useState(false);
 
+  const debounceTimer = useRef<NodeJS.Timeout | null>(null);
+
+  // 1. Fetch persistent notes, snippets, and links on sheet open or topic change
   useEffect(() => {
-    if (open) setNote("");
-  }, [page?.cluster_id, open]);
+    if (!open || !page || !sessionId) return;
+
+    // Reset components to loading states
+    setNote("");
+    setSnippets([{ lang: "python", code: "" }]);
+    setLinks([]);
+    setLoading(true);
+
+    const fetchWorkspaceNotes = async () => {
+      try {
+        const res = await fetch(`${API_BASE_URL}/api/notebooks/${sessionId}/notes`);
+        if (res.ok) {
+          const data = await res.json();
+          
+          // Set persistent note text
+          if (data.notes && data.notes[page.cluster_id]) {
+            setNote(data.notes[page.cluster_id]);
+          }
+
+          // Set persistent snippets
+          if (data.snippets && data.snippets[page.cluster_id]) {
+            setSnippets(data.snippets[page.cluster_id]);
+          } else {
+            setSnippets([{ lang: "python", code: "" }]);
+          }
+
+          // Set persistent links
+          if (data.links && data.links[page.cluster_id]) {
+            setLinks(data.links[page.cluster_id]);
+          } else {
+            setLinks([]);
+          }
+        }
+      } catch (err) {
+        console.error("Failed to load workspace persistence:", err);
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    fetchWorkspaceNotes();
+  }, [page?.cluster_id, open, sessionId]);
+
+  // 2. Debounced save to DB
+  const saveWorkspaceData = async (
+    updatedNote: string,
+    updatedSnippets: { lang: string; code: string }[],
+    updatedLinks: { url: string; label: string }[]
+  ) => {
+    if (!page || !sessionId) return;
+
+    try {
+      // Fetch latest global notebook notes dictionary first to avoid overwriting other clusters
+      const res = await fetch(`${API_BASE_URL}/api/notebooks/${sessionId}/notes`);
+      let notesDict: Record<string, string> = {};
+      let snippetsDict: Record<string, any> = {};
+      let linksDict: Record<string, any> = {};
+
+      if (res.ok) {
+        const data = await res.json();
+        notesDict = data.notes || {};
+        snippetsDict = data.snippets || {};
+        linksDict = data.links || {};
+        
+        // Safety casts if types loaded as legacy arrays
+        if (Array.isArray(snippetsDict)) snippetsDict = {};
+        if (Array.isArray(linksDict)) linksDict = {};
+      }
+
+      notesDict[page.cluster_id.toString()] = updatedNote;
+      snippetsDict[page.cluster_id.toString()] = updatedSnippets;
+      linksDict[page.cluster_id.toString()] = updatedLinks;
+
+      await fetch(`${API_BASE_URL}/api/notebooks/${sessionId}/notes`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          notes: notesDict,
+          snippets: snippetsDict,
+          links: linksDict,
+        }),
+      });
+    } catch (err) {
+      console.error("Failed to save workspace persistence:", err);
+    }
+  };
 
   const handleNoteChange = (val: string) => {
     setNote(val);
-    if (page) onObsidianLink(page.cluster_id, val);
+    onObsidianLink(page!.cluster_id, val);
+
+    if (debounceTimer.current) clearTimeout(debounceTimer.current);
+    debounceTimer.current = setTimeout(() => {
+      saveWorkspaceData(val, snippets, links);
+    }, 800);
+  };
+
+  const handleSnippetsChange = (updatedSnippets: { lang: string; code: string }[]) => {
+    setSnippets(updatedSnippets);
+    if (debounceTimer.current) clearTimeout(debounceTimer.current);
+    debounceTimer.current = setTimeout(() => {
+      saveWorkspaceData(note, updatedSnippets, links);
+    }, 800);
+  };
+
+  const handleLinksChange = (updatedLinks: { url: string; label: string }[]) => {
+    setLinks(updatedLinks);
+    if (debounceTimer.current) clearTimeout(debounceTimer.current);
+    debounceTimer.current = setTimeout(() => {
+      saveWorkspaceData(note, snippets, updatedLinks);
+    }, 800);
   };
 
   if (!page) return null;
@@ -301,52 +431,75 @@ export default function WikiSheet({ page, open, onClose, onObsidianLink }: WikiS
 
           {/* Notes tab */}
           <TabsContent value="notes" className="flex-1 overflow-y-auto px-6 py-4 space-y-3 mt-0">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-1.5">
-                <BookOpen className="w-3 h-3 text-[#7c3aed]" />
-                <span className="text-[10px] text-slate-500 uppercase tracking-wider">Obsidian-style notes</span>
+            {loading ? (
+              <div className="flex flex-col items-center justify-center py-16 gap-3">
+                <Loader2 className="w-6 h-6 text-[#7c3aed] animate-spin" />
+                <span className="text-xs text-slate-500 font-mono">Syncing notes with SQLite...</span>
               </div>
-              <span className="text-[10px] text-slate-600">[[Topic Name]] to link nodes</span>
-            </div>
-
-            <Textarea
-              value={note}
-              onChange={(e) => handleNoteChange(e.target.value)}
-              placeholder={`Your notes for "${page.topic_title}"…\n\nType [[Another Topic]] to draw a live edge on the graph.`}
-              className="min-h-[180px] resize-none bg-white/5 border-white/10 text-sm text-slate-300
-                placeholder:text-slate-700 focus:border-[#10b981]/50 rounded-xl font-mono"
-            />
-
-            {note.includes("[[") && (
-              <div className="flex items-center gap-2 text-[11px] text-[#10b981] px-1">
-                <span className="w-1.5 h-1.5 rounded-full bg-[#10b981] animate-pulse" />
-                Bidirectional link detected — graph edge drawn
-              </div>
-            )}
-
-            {/* Regex match preview */}
-            {note.match(/\[\[([^\]]+)\]\]/g) && (
-              <div className="rounded-lg border border-[#10b981]/20 p-3 bg-[#10b981]/5">
-                <p className="text-[10px] text-[#10b981] font-medium mb-1.5">Linked nodes:</p>
-                <div className="flex flex-wrap gap-1.5">
-                  {[...note.matchAll(/\[\[([^\]]+)\]\]/g)].map((m, i) => (
-                    <span key={i} className="text-[11px] px-2 py-0.5 rounded-full bg-[#10b981]/15 text-[#10b981] border border-[#10b981]/30">
-                      {m[1]}
-                    </span>
-                  ))}
+            ) : (
+              <>
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-1.5">
+                    <BookOpen className="w-3 h-3 text-[#7c3aed]" />
+                    <span className="text-[10px] text-slate-500 uppercase tracking-wider">Obsidian-style notes</span>
+                  </div>
+                  <span className="text-[10px] text-slate-600">[[Topic Name]] to link nodes</span>
                 </div>
-              </div>
+
+                <Textarea
+                  value={note}
+                  onChange={(e) => handleNoteChange(e.target.value)}
+                  placeholder={`Your notes for "${page.topic_title}"…\n\nType [[Another Topic]] to draw a live edge on the graph.`}
+                  className="min-h-[180px] resize-none bg-white/5 border-white/10 text-sm text-slate-300
+                    placeholder:text-slate-700 focus:border-[#10b981]/50 rounded-xl font-mono"
+                />
+
+                {note.includes("[[") && (
+                  <div className="flex items-center gap-2 text-[11px] text-[#10b981] px-1">
+                    <span className="w-1.5 h-1.5 rounded-full bg-[#10b981] animate-pulse" />
+                    Bidirectional link detected — graph edge drawn
+                  </div>
+                )}
+
+                {/* Regex match preview */}
+                {note.match(/\[\[([^\]]+)\]\]/g) && (
+                  <div className="rounded-lg border border-[#10b981]/20 p-3 bg-[#10b981]/5">
+                    <p className="text-[10px] text-[#10b981] font-medium mb-1.5">Linked nodes:</p>
+                    <div className="flex flex-wrap gap-1.5">
+                      {[...note.matchAll(/\[\[([^\]]+)\]\]/g)].map((m, i) => (
+                        <span key={i} className="text-[11px] px-2 py-0.5 rounded-full bg-[#10b981]/15 text-[#10b981] border border-[#10b981]/30">
+                          {m[1]}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </>
             )}
           </TabsContent>
 
           {/* Code tab */}
           <TabsContent value="code" className="flex-1 overflow-y-auto px-6 py-4 mt-0">
-            <CodeSnippetsTab />
+            {loading ? (
+              <div className="flex flex-col items-center justify-center py-16 gap-3">
+                <Loader2 className="w-6 h-6 text-[#7c3aed] animate-spin" />
+                <span className="text-xs text-slate-500 font-mono">Syncing code snippets...</span>
+              </div>
+            ) : (
+              <CodeSnippetsTab snippets={snippets} onChange={handleSnippetsChange} />
+            )}
           </TabsContent>
 
           {/* Links tab */}
           <TabsContent value="links" className="flex-1 overflow-y-auto px-6 py-4 mt-0">
-            <ExternalLinksTab />
+            {loading ? (
+              <div className="flex flex-col items-center justify-center py-16 gap-3">
+                <Loader2 className="w-6 h-6 text-[#7c3aed] animate-spin" />
+                <span className="text-xs text-slate-500 font-mono">Syncing references...</span>
+              </div>
+            ) : (
+              <ExternalLinksTab links={links} onChange={handleLinksChange} />
+            )}
           </TabsContent>
         </Tabs>
       </SheetContent>

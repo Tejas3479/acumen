@@ -108,37 +108,9 @@ export async function fetchNotebooks(token?: string | null) {
   return fetchDeduplicated(cacheKey, () => fetchAPI("/api/notebooks", withAuth(token)));
 }
 
-export async function uploadPDF(file: File, token?: string | null) {
-  const form = new FormData();
-  form.append("file", file);
-  return fetchAPI("/upload", withAuth(token, { method: "POST", body: form }));
-}
-
-export async function synthesize(sessionId: string, token?: string | null) {
-  return fetchAPI(`/synthesize/${sessionId}`, withAuth(token, { method: "POST" }));
-}
-
-export async function pollStatus(sessionId: string, token?: string | null) {
-  // Status polling should generally not be cached / deduplicated directly unless simultaneous
-  return fetchAPI(`/status/${sessionId}`, withAuth(token));
-}
-
 export async function fetchGraphData(sessionId: string, token?: string | null) {
   const cacheKey = `/graph-data/${sessionId}-${token ?? activeToken ?? "anonymous"}`;
   return fetchDeduplicated(cacheKey, () => fetchAPI(`/graph-data/${sessionId}`, withAuth(token)));
-}
-
-export async function sendChat(
-  sessionId: string,
-  message: string,
-  history: { role: string; content: string }[],
-  token?: string | null
-) {
-  return fetchAPI("/chat", withAuth(token, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ session_id: sessionId, message, history }),
-  }));
 }
 
 export type { FetchOpts };

@@ -14,6 +14,9 @@
   --acumen-muted: #64748b;
 }
 
+@keyframes wave-bar { from{transform:scaleY(.4);opacity:.6} to{transform:scaleY(1);opacity:1} }
+@keyframes progress-shimmer { 0%{background-position:-200% center} 100%{background-position:200% center} }
+
 /* Base dark overrides */
 .dark {
   --background: oklch(0.07 0.01 265);
@@ -112,18 +115,7 @@
   animation: pulse-dot 1.5s ease-in-out infinite;
 }
 
-/* Web augmented badge glow */
-.badge-web {
-  background: rgba(6, 182, 212, 0.15);
-  border: 1px solid rgba(6, 182, 212, 0.4);
-  color: #06b6d4;
-  animation: badge-glow 2s ease-in-out infinite;
-}
 
-@keyframes badge-glow {
-  0%, 100% { box-shadow: 0 0 6px rgba(6, 182, 212, 0.4); }
-  50%       { box-shadow: 0 0 14px rgba(6, 182, 212, 0.8); }
-}
 
 /* ── Flip Cards ──────────────────────────────────────────────────────── */
 .flip-card {
@@ -201,16 +193,7 @@
   cursor: not-allowed;
 }
 
-/* ── Arch card icon badge ────────────────────────────────────────────── */
-.arch-icon-badge {
-  width: 28px;
-  height: 28px;
-  border-radius: 8px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  flex-shrink: 0;
-}
+
 
 /* ── Checklist item ──────────────────────────────────────────────────── */
 .task-item {
@@ -222,5 +205,30 @@
 .task-item.checked .task-label {
   text-decoration: line-through;
   color: #475569;
+}
+
+
+/* ── Next-Gen UI/UX Orbiting Border Glows & HUD ──────────────────────── */
+@keyframes orbit-glow {
+  0% { background-position: 0% 50%; }
+  50% { background-position: 100% 50%; }
+  100% { background-position: 0% 50%; }
+}
+
+.cosmic-hud-pill {
+  background: rgba(10, 10, 15, 0.45);
+  backdrop-filter: blur(24px);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.cosmic-hud-pill:hover {
+  border-color: rgba(124, 58, 237, 0.3);
+  box-shadow: 0 0 20px rgba(124, 58, 237, 0.15);
+  transform: translateY(-1.5px);
+}
+
+.animate-pulse-slow {
+  animation: pulse-dot 3.5s ease-in-out infinite;
 }
 

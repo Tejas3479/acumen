@@ -4,8 +4,9 @@ import { useState, useEffect, useRef } from "react";
 import {
   Brain, GitBranch, LayoutPanelLeft,
   MessageSquare, Loader2, AlertTriangle,
-  Plus, ChevronDown, Globe, BookText
+  Plus, ChevronDown, Globe, BookText, Library
 } from "lucide-react";
+
 import { UserButton } from "@clerk/nextjs";
 import AddSourceModal from "@/components/AddSourceModal";
 import WorkspaceHud from "@/components/WorkspaceHud";
@@ -16,6 +17,7 @@ type AppState = "idle" | "synthesizing" | "ready" | "error";
 type ActivePanel = "graph" | "chat";
 
 interface WorkspaceHeaderProps {
+  view: "workspace" | "library";
   notebooks: Notebook[];
   sessionId: string | null;
   filename: string;
@@ -31,6 +33,7 @@ interface WorkspaceHeaderProps {
 }
 
 export default function WorkspaceHeader({
+  view,
   notebooks,
   sessionId,
   filename,
@@ -75,7 +78,33 @@ export default function WorkspaceHeader({
         </div>
       </button>
 
-      {notebooks.length > 0 ? (
+      {/* Premium Sliding Navbar (Top-level Navigation) */}
+      <div className="flex items-center gap-1.5 p-1 bg-white/[0.02] border border-white/5 rounded-2xl ml-4 select-none">
+        <button
+          onClick={() => setView("workspace")}
+          className={`flex items-center gap-2 px-3.5 py-2 rounded-xl text-[11px] font-mono uppercase tracking-wider transition-all duration-300 cursor-pointer border ${
+            view === "workspace"
+              ? "bg-white/10 text-white border-white/10 shadow-[0_0_15px_rgba(255,255,255,0.05)]"
+              : "text-slate-500 hover:text-slate-300 border-transparent bg-transparent"
+          }`}
+        >
+          <LayoutPanelLeft className="w-3.5 h-3.5 text-[#a78bfa]" />
+          Workspace
+        </button>
+        <button
+          onClick={() => setView("library")}
+          className={`flex items-center gap-2 px-3.5 py-2 rounded-xl text-[11px] font-mono uppercase tracking-wider transition-all duration-300 cursor-pointer border ${
+            view === "library"
+              ? "bg-white/10 text-white border-white/10 shadow-[0_0_15px_rgba(255,255,255,0.05)]"
+              : "text-slate-500 hover:text-slate-300 border-transparent bg-transparent"
+          }`}
+        >
+          <Library className="w-3.5 h-3.5 text-blue-400" />
+          Vault History
+        </button>
+      </div>
+
+      {notebooks.length >= 0 ? (
         <div className="ml-2 relative flex items-center gap-2" ref={dropdownRef}>
           <button
             onClick={() => setDropdownOpen(!dropdownOpen)}

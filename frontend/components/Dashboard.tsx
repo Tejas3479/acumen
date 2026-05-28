@@ -655,6 +655,7 @@ export default function Dashboard() {
       <main className="flex flex-col flex-1 min-w-0 overflow-hidden relative z-10" style={{ background: "rgba(10, 10, 15, 0.45)", backdropFilter: "blur(20px)" }}>
         {/* Top Nav */}
         <WorkspaceHeader
+          view={view}
           notebooks={notebooks}
           sessionId={sessionId}
           filename={filename}

@@ -40,20 +40,12 @@ export default function LibraryView({
 
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
           {/* Upload Card */}
-          <div className="p-10 rounded-[2.5rem] bg-white/[0.03] border border-white/10 backdrop-blur-2xl hover:bg-white/[0.05] transition-all group relative overflow-hidden">
-            <div className="absolute top-0 right-0 p-10 opacity-5 group-hover:opacity-10 transition-opacity">
-              <Plus className="w-40 h-40 text-white" />
-            </div>
-            <div className="relative z-10 space-y-8">
-              <div className="w-14 h-14 rounded-2xl bg-[#7c3aed]/20 border border-[#7c3aed]/30 flex items-center justify-center">
-                <Plus className="w-7 h-7 text-[#a78bfa]" />
-              </div>
-              <div>
-                <h3 className="text-2xl font-bold text-white mb-3">Create New Notebook</h3>
-                <p className="text-slate-400 leading-relaxed">Upload a PDF or paste a URL to initialize a new Knowledge Graph and Agent context.</p>
-              </div>
-              <IngestionEngine mode="hero" onUploadComplete={handleUploadComplete} onStartSynthesis={handleStartSynthesis} />
-            </div>
+          <div className="animate-in fade-in duration-500">
+            <IngestionEngine 
+              mode="hero" 
+              onUploadComplete={handleUploadComplete} 
+              onStartSynthesis={handleStartSynthesis} 
+            />
           </div>
 
           {/* Quick Stats Card */}
